@@ -1,3 +1,67 @@
+# -----------------------------
+# Secrets / Environment
+# -----------------------------
+.env
+.env.*
+*.key
+*.pem
+*.crt
+secrets.yaml
+secrets.yml
+kubeconfig
+.kube/config
+# -----------------------------
+# AI / Data / ML
+# -----------------------------
+*.model
+*.bin
+*.pt
+*.pth
+*.onnx
+*.ckpt
+datasets/
+data/
+outputs/
+logs/
+# -----------------------------
+# Kubernetes
+# -----------------------------
+*.kubeconfig
+kubeconfig*
+*.cluster
+kind-config.yaml
+# Helm
+charts/*/charts/
+charts/*/tmp/
+# kustomize build artifacts
+kustomize-build/
+# -----------------------------
+# Containers
+# -----------------------------
+.docker/
+docker-compose.override.yml
+# -----------------------------
+# Editor / IDE
+# -----------------------------
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+# -----------------------------
+# OS junk
+# -----------------------------
+.DS_Store
+Thumbs.db
+# -----------------------------
+# Terraform (if used)
+# -----------------------------
+.terraform/
+*.tfstate
+*.tfstate.backup
+
+
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]
