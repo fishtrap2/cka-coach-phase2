@@ -6,7 +6,7 @@ els_model = load_els_model()
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 def build_els_prompt(question: str, els_model: dict, context: str = "") -> str:
-    prompt = f"""
+    SYSTEM_PROMPT = f"""
 You are a Kubernetes expert assistant.
 
 You MUST use the provided ELS (Expanded Layered Stack) model to reason.
