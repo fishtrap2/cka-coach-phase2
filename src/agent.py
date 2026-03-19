@@ -1,12 +1,38 @@
+# src/agent.py
 import os
-from openai import OpenAI
-from els import load_els_model
-els_model = load_els_model()
-# Initialize OpenAI client
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+import yaml
+from openai import OpenAI  # or whichever LLM client you are using
 
+client = OpenAI()  # make sure your client is configured
+
+# --------------------------
+# Load ELS Model
+# --------------------------
+BASE_DIR = os.path.dirname(os.path.dirname(__file__))
+
+def load_els_model():
+    path = os.path.join(BASE_DIR, "models", "els_model.yaml")
+    with open(path, "r") as f:
+        return yaml.safe_load(f)
+
+# --------------------------
+# System Prompt
+# --------------------------
+SYSTEM_PROMPT = """
+You are a Kubernetes expert assistant.
+Use the ELS (Expanded Layered Stack) model to reason about layers, controllers, kubelet, pods, and container runtimes.
+Provide structured JSON output including:
+- layer
+- explanation
+- commands
+- next_steps
+"""
+
+# --------------------------
+# Prompt Builder
+# --------------------------
 def build_els_prompt(question: str, els_model: dict, context: str = "") -> str:
-    SYSTEM_PROMPT = f"""
+    prompt = f"""
 You are a Kubernetes expert assistant.
 
 You MUST use the provided ELS (Expanded Layered Stack) model to reason.
@@ -24,7 +50,6 @@ INSTRUCTIONS:
 QUESTION:
 {question}
 """
-
     if context:
         prompt += f"\n\nCLUSTER CONTEXT:\n{context}"
 
@@ -36,25 +61,23 @@ Return your answer as JSON with:
 - commands
 - next_steps
 """
-
     return prompt
 
+# --------------------------
+# Main ask_llm function
+# --------------------------
 def ask_llm(question: str, context: str = "") -> str:
     """
     Sends a question to the LLM along with optional cluster context.
     """
-
     try:
-
-        # 🔥 NEW: load your model
+        # Load the ELS model
         els_model = load_els_model()
 
-        # 🔥 NEW: build enriched prompt
+        # Build the prompt
         prompt = build_els_prompt(question, els_model, context)
 
-        if context:
-            prompt += f"\n\nCluster Context:\n{context}"
-
+        # Call the LLM
         response = client.chat.completions.create(
             model="gpt-4.1-mini",
             messages=[
