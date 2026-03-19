@@ -1,22 +1,43 @@
 import os
 from openai import OpenAI
+from els import load_els_model
+els_model = load_els_model()
 # Initialize OpenAI client
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
-SYSTEM_PROMPT = """
-You are a Certified Kubernetes Administrator training coach.
+def build_els_prompt(question: str, els_model: dict, context: str = "") -> str:
+    prompt = f"""
+You are a Kubernetes expert assistant.
 
-Use the ELS (Everything Lives Somewhere) 9-layer architecture model.
+You MUST use the provided ELS (Expanded Layered Stack) model to reason.
 
-When answering questions:
+ELS MODEL:
+{els_model}
 
-1. Identify which ELS layer the component belongs to
-2. Explain where the component runs in the Kubernetes stack
-3. Suggest debugging commands a student could run
-4. Prefer commands that work in a typical cloud lab environment
+INSTRUCTIONS:
+1. Identify which layer(s) are relevant
+2. Explain interactions between layers
+3. Provide debug commands from the model
+4. If debugging, walk top-down through layers
+5. Be explicit about API boundaries
 
-Be concise and educational.
+QUESTION:
+{question}
 """
+
+    if context:
+        prompt += f"\n\nCLUSTER CONTEXT:\n{context}"
+
+    prompt += """
+
+Return your answer as JSON with:
+- layer
+- explanation
+- commands
+- next_steps
+"""
+
+    return prompt
 
 def ask_llm(question: str, context: str = "") -> str:
     """
@@ -25,7 +46,11 @@ def ask_llm(question: str, context: str = "") -> str:
 
     try:
 
-        prompt = question
+        # 🔥 NEW: load your model
+        els_model = load_els_model()
+
+        # 🔥 NEW: build enriched prompt
+        prompt = build_els_prompt(question, els_model, context)
 
         if context:
             prompt += f"\n\nCluster Context:\n{context}"
