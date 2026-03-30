@@ -12,6 +12,7 @@ from agent import ask_llm
 # --------------------------
 # Retro Styling
 # --------------------------
+st.markdown(html, unsafe_allow_html=True)
 st.markdown("""
 <style>
 body {
