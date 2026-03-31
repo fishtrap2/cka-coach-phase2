@@ -61,7 +61,7 @@ auto_refresh = col1.checkbox("Auto Refresh", value=False)
 interval = col2.slider("Refresh Interval (sec)", 2, 30, 5)
 
 if auto_refresh:
-    st.experimental_rerun()
+    st._rerun()
 
 # --------------------------
 # Helpers
