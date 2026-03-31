@@ -101,16 +101,19 @@ with st.spinner("Collecting state..."):
 # Layer Definitions
 # --------------------------
 layers = [
-    ("9", "Applications", "User containers", "User processes", "", "L9"),
-    ("8", "Pods", "kubelet-managed", "Abstraction", "kubectl", "L8"),
-    ("7", "K8S Objects", "etcd/API server", "Persistent state", "kubectl", "L7"),
-    ("6", "Controllers", "control plane", "Control loops", "kubectl", "L6"),
-    ("5", "kubelet", "systemd service", "Daemon", "systemctl", "L5"),
-    ("4", "containerd", "systemd service", "CRI daemon", "crictl", "L4"),
-    ("3", "Containers", "runtime processes", "Short-lived", "crictl", "L3"),
-    ("2", "OCI (runc)", "invoked binary", "Exec", "ps", "L2"),
-    ("1", "Kernel", "guest OS", "State machine", "ip / proc", "L1"),
-    ("0", "VM/Infra", "GCP VM", "Virtualization", "", "L0"),
+    ("9", "Applications", "User-facing application logic", "application processes living inside containers", "app specific", "unkown", "L9"),
+    ("8", "Pods", "Pod abstraction wrapping one or more containers", "kubelet-managed containers on nodes", "abstraction/meta", "kubectl get pods -o wide", "L8"),
+    ("7", "K8S Objects", "Desired state definitions stored in API server", "Persistent state(etcd via kube-apiserver)", "kubectl cluster-info, kubectl config view", "L7"),
+    ("6.5", "K8S API Layer", "Kubernetes API server and etcd (cluster state store)", "control-plane node (containers or processes)", "long_running_daemon", "kubectl get componentstatuses", "L6.5"),
+    ("6", "Operators", "Custom controllers with domain-specific logic", "pods in cluster", "long_running_daemon", "kubectl get pods -n <operator-namespace>", "L6"),
+    ("5", "Controllers", "Core reconciliation loops (deployment, replicaset, node)", "kube-controller-manager (is itself  a static pod)", "long running daemon", "kubectl get pods --all-namespaces", "L5"),
+    ("4.1", "kubelet", "node level control agent", "workers and control plane nodes' systemd/PID1", "long running system service", "systemctl status kubelet", "L4.1"),
+    ("4.2", "kube-proxy", "tasked with managing network connectivity for Pods", "lives as a kube-system pod (may be replaced by CNI plugins), "long running daemon", "iptables -L -n -v", "L4.2"),
+    ("4.3", "cni", "Container Network Interface & Plugin", "runs long enough to create veth pairs, assign IPs, attach pod to a bridge etc.", "short lived executable", "sudo ls /etc/cni/net.d/, ip route", "L4.3"),   
+    ("3", "Container Runtime Interface - CRI (e.g. containerd or CRI-O)", "Enables node-level container management (start/stop/pull) by the kubelet.",  "systemd service on node", "CRI daemon", "crictl", "L4"),
+    ("2", "OCI (runc)", "Low-level container executor or shim (e.g., runc)", "invoked by the CRI", "short lived executable", "ps aux | grep runc", "L2"),
+    ("1", "Kernel", "Kernel providing namespaces, cgroups, networking", "guest OS inside of provider's VM", "Persistent State Machine", "ip / proc", "L1"),
+    ("0", "VM/Infra", "Virtualized CPU, memory, network interfaces", "hypervisor-provided abstraction", "Virtualization Layer", "lscpu, lsblk", "L0"),
 ]
 
 # --------------------------
@@ -120,15 +123,16 @@ table_html += """
 <table class="els-table">
 <tr>
 <th style="width:40px">Lvl</th>
-<th style="width:240px">Layer</th>
+<th style="width:100px">Layer</th>
+<th style="width:240px">Description</th>
 <th style="width:240px">Lives</th>
 <th style="width:200px">Execution Type</th>
 <th style="width:200px">API</th>
-<th>Current</th>
+<th style="width:680px">Current</th>
 </tr>
 """
 
-for lvl, name, lives, exec_type, api, key in layers:
+for lvl, name, description, lives, exec_type, api, key in layers:
     current, ok = summary.get(key, ("...", True))
     health = "🟢" if ok else "🔴"
 
@@ -147,7 +151,7 @@ table_html += "</table>"
 st.write("Rendering table now...")
 
 import streamlit.components.v1 as components
-components.html(table_html, height=500, scrolling=True)
+components.html(table_html, height=600, scrolling=True)
 
 st.caption(f"Last refresh: {datetime.now().strftime('%H:%M:%S')}")
 
