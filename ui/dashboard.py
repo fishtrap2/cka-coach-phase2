@@ -15,7 +15,7 @@ st.title("🧠 CKA Coach — ELS Console")
 # --------------------------
 # Retro Styling (separate from table HTML)
 # --------------------------
-table_html = ("""
+table_html = """
 <style>
 body {
     background-color: black;
