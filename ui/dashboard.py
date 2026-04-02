@@ -15,7 +15,7 @@ st.title("🧠 CKA Coach — ELS Console")
 # --------------------------
 # Retro Styling (separate from table HTML)
 # --------------------------
-st.markdown("""
+table_html = ("""
 <style>
 body {
     background-color: black;
@@ -53,7 +53,7 @@ body {
     opacity: 0.9;
 }
 </style>
-""", unsafe_allow_html=True)
+"""
 
 # --------------------------
 # Controls
@@ -237,7 +237,7 @@ for lvl, name, description, lives, exec_type, api, key in layers:
 # --------------------------
 # Render table ONCE
 # --------------------------
-table_html = f"""
+table_html += f"""
 <table class="els-table">
     <tr>
         <th style="width:40px">Lvl</th>
@@ -261,7 +261,7 @@ st.caption(f"Last refresh: {datetime.now().strftime('%H:%M:%S')}")
 # --------------------------
 st.divider()
 
-for lvl, name, _, _, _, _, key in layers:
+for lvl, name, _, _, _, _, _, key in layers:
     col1, col2 = st.columns([1, 3])
 
     with col1:
