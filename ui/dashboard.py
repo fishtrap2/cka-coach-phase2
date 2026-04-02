@@ -144,6 +144,9 @@ table_html += """
 <th style="width:680px">Current</th>
 </tr>
 """
+
+versions_map = map_versions_to_layers(state)
+health = state.get("health", {})
 rows =""
 
 for lvl, name, description, lives, exec_type, api, key in layers:
