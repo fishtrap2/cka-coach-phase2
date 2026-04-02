@@ -208,7 +208,7 @@ for lvl, name, description, lives, exec_type, api, key in layers:
     <th>Current</th>
     </tr>
     {rows}
-    </table>
+    </table_html>
     """
 
 st.write("Rendering table now...")
