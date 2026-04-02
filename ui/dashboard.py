@@ -151,7 +151,7 @@ for lvl, name, description, lives, exec_type, api, key in layers:
     version = versions_map.get(key, "")
 
     # Health Logic
-     if key == "L8" and (health["pods_pending"] or health["pods_crashloop"]):
+    if key == "L8" and (health["pods_pending"] or health["pods_crashloop"]):
         row_color = "#220000"
         health_icon = "🔴"
     elif key == "L5" and not health["kubelet_ok"]:
