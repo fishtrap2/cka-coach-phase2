@@ -50,6 +50,18 @@ body {
 }
 </style>
 """
+def map_versions_to_layers(state):
+    v = state.get("versions", {})
+
+    return {
+        "L6.5": v.get("api", ""),
+        "L5": v.get("api", ""),          # controllers tied to API version
+        "L4": v.get("kubelet", ""),
+        "L3": v.get("containerd", ""),
+        "L2": v.get("runc", ""),
+        "L1": v.get("kernel", ""),
+        "L3_cni": v.get("cni", ""),
+    }
 
 st.title("🧠 CKA Coach — ELS Console")
 
@@ -124,6 +136,7 @@ table_html += """
 <tr>
 <th style="width:40px">Lvl</th>
 <th style="width:100px">Layer</th>
+<th style="width:140px">Version</th>
 <th style="width:240px">Description</th>
 <th style="width:240px">Lives</th>
 <th style="width:200px">Execution Type</th>
@@ -131,16 +144,31 @@ table_html += """
 <th style="width:680px">Current</th>
 </tr>
 """
+rows =""
 
 for lvl, name, description, lives, exec_type, api, key in layers:
     current, ok = summary.get(key, ("...", True))
-    health = "🟢" if ok else "🔴"
+    version = versions_map.get(key, "")
 
-    table_html += f"""
-    <tr>
+    # Health Logic
+     if key == "L8" and (health["pods_pending"] or health["pods_crashloop"]):
+        row_color = "#220000"
+        health_icon = "🔴"
+    elif key == "L5" and not health["kubelet_ok"]:
+        row_color = "#220000"
+        health_icon = "🔴"
+    elif key == "L4" and not health["containerd_ok"]:
+        row_color = "#220000"
+        health_icon = "🔴"
+    else:
+        row_color = "#001100"
+        health_icon = "🟢"
+
+    rows += f"""
+    <tr style="background-color:{row_color}">
         <td>{lvl}</td>
-        <td><div class="layer-name">{name}</div>{health}</td>
-        <td>{description}</td>
+        <td><div class="layer-name">{name}</div>{health_icon}</td>
+        <td>{version}</td>
         <td>{lives}</td>
         <td>{exec_type}</td>
         <td>{api}</td>
@@ -148,13 +176,45 @@ for lvl, name, description, lives, exec_type, api, key in layers:
     </tr>
     """
 
-table_html += "</table>"
+    table_html += f"""
+    <style>
+    body {{
+        background-color: black;
+        color: #00ff00;
+        font-family: monospace;
+    }}
+    .els-table {{
+        width: 100%;
+        border-collapse: collapse;
+    }}
+    .els-table td, .els-table th {{
+        border: 1px solid #00ff00;
+        padding: 6px;
+    }}
+    </style>
+    
+    <table class="els-table"> 
+    <tr>
+    <th>Lvl</th>
+    <th>Layer</th>
+    <th>Version</th>
+    <th>Description</th>
+    <th>Lives</th>
+    <th>Execution</th>
+    <th>API</th>
+    <th>Current</th>
+    </tr>
+    {rows}
+    </table>
+    """
+
 st.write("Rendering table now...")
 
-import streamlit.components.v1 as components
-components.html(table_html, height=600, scrolling=True)
+st.markdown(table_html, unsafe_allow_html=True)
 
 st.caption(f"Last refresh: {datetime.now().strftime('%H:%M:%S')}")
+
+st.write("Query LLM Here")
 
 # --------------------------
 # Explain + Expand
