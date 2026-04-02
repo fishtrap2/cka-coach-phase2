@@ -253,7 +253,7 @@ table_html += f"""
 </table>
 """
 import streamlit.components.v1 as components
-components.html(table_html, height=500, scrolling=True)
+components.html(table_html, height=1000, scrolling=True)
 
 st.caption(f"Last refresh: {datetime.now().strftime('%H:%M:%S')}")
 
@@ -262,7 +262,7 @@ st.caption(f"Last refresh: {datetime.now().strftime('%H:%M:%S')}")
 # --------------------------
 st.divider()
 
-for lvl, name, _, _, _, _, _, _, key in layers:
+for lvl, name, _, _, _, _, key in layers:
     col1, col2 = st.columns([1, 3])
 
     with col1:
