@@ -141,8 +141,18 @@ def build_deterministic_els_result(question: str, context: str) -> ELSResult:
 # Normalize model output
 # --------------------------
 def normalize_response(raw: str) -> CoachResponse:
+    text = raw.strip()
+
+    # Strip markdown fenced code block if present
+    if text.startswith("```"):
+        parts = text.split("```")
+        if len(parts) >= 2:
+            text = parts[1].strip()
+            if text.startswith("json"):
+                text = text[4:].strip()
+
     try:
-        return json.loads(raw)
+        return json.loads(text)
     except Exception:
         return {
             "raw_text": raw,
@@ -165,7 +175,6 @@ def normalize_response(raw: str) -> CoachResponse:
             "agent_trace": [],
             "warnings": ["Response was not valid JSON."],
         }
-
 
 # --------------------------
 # Main LLM function
@@ -209,6 +218,8 @@ Important:
 - Expand and teach from the ELS result; do not invent a different layered analysis.
 
 Return STRICT JSON only.
+Do not wrap the JSON in markdown fences.
+Do not add commentary before or after the JSON
 """
 
         user_prompt = f"""
