@@ -1,95 +1,129 @@
-# src/agent.py
 import os
 import yaml
-from openai import OpenAI  # or whichever LLM client you are using
+import json
+from openai import OpenAI
 
-client = OpenAI()  # make sure your client is configured
+client = OpenAI()
 
-# --------------------------
-# Load ELS Model
-# --------------------------
 BASE_DIR = os.path.dirname(os.path.dirname(__file__))
 
+
+# --------------------------
+# Load ELS Model (UNCHANGED)
+# --------------------------
 def load_els_model():
     path = os.path.join(BASE_DIR, "src/schemas", "els_schema.yaml")
     with open(path, "r") as f:
         return yaml.safe_load(f)
 
-# --------------------------
-# System Prompt
-# --------------------------
-SYSTEM_PROMPT = """
-You are a Kubernetes expert assistant.
-Use the ELS (Expanded Layered Stack) model to reason about layers, controllers, kubelet, pods, and container runtimes.
-Provide structured JSON output including:
-- layer
-- explanation
-- commands
-- next_steps
-"""
 
 # --------------------------
-# Prompt Builder
+# Build structured context
 # --------------------------
-def build_els_prompt(question: str, els_model: dict, context: str = "") -> str:
-    prompt = f"""
-You are a Kubernetes expert assistant.
+def build_context(question: str, context: str):
+    return {
+        "question": question,
+        "context": context[:4000]  # protect cluster + tokens
+    }
 
-You MUST use the provided ELS (Expanded Layered Stack) model to reason.
-
-ELS MODEL:
-{els_model}
-
-INSTRUCTIONS:
-1. Identify which layer(s) are relevant
-2. Explain interactions between layers
-3. Provide debug commands from the model
-4. If debugging, walk top-down through layers
-5. Be explicit about API boundaries
-
-QUESTION:
-{question}
-"""
-    if context:
-        prompt += f"\n\nCLUSTER CONTEXT:\n{context}"
-
-    prompt += """
-
-Return your answer as JSON with:
-- layer
-- explanation
-- commands
-- next_steps
-"""
-    return prompt
 
 # --------------------------
-# Main ask_llm function
+# Agent Trace (NEW)
 # --------------------------
-def ask_llm(question: str, context: str = "") -> str:
-    """
-    Sends a question to the LLM along with optional cluster context.
-    """
+def build_trace(question, context):
+    trace = [
+        {
+            "step": 1,
+            "action": "Interpret question",
+            "why": "Determine which Kubernetes layer and resource type is relevant",
+            "outcome": question
+        },
+        {
+            "step": 2,
+            "action": "Attach cluster context",
+            "why": "Provide real cluster evidence instead of hallucination",
+            "outcome": f"context size={len(context)} chars"
+        },
+        {
+            "step": 3,
+            "action": "Apply ELS model",
+            "why": "Map observations to layered Kubernetes mental model",
+            "outcome": "ELS model loaded"
+        }
+    ]
+    return trace
+
+
+# --------------------------
+# LLM call (UPDATED)
+# --------------------------
+def ask_llm(question: str, context: str = ""):
     try:
-        # Load the ELS model
         els_model = load_els_model()
+        trace = build_trace(question, context)
 
-        # Build the prompt
-        prompt = build_els_prompt(question, els_model, context)
+        payload = {
+            "question": question,
+            "context": context[:4000],
+            "els_model": els_model,
+            "agent_trace": trace
+        }
 
-        # Call the LLM
-        response = client.chat.completions.create(
-            model="gpt-4.1-mini",
-            messages=[
-                {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": prompt},
+        system_prompt = """
+You are cka-coach, a Kubernetes + AI systems tutor.
+
+You MUST:
+- Use the provided ELS model as ground truth
+- Use the provided agent trace
+- Use ONLY provided context (no guessing)
+
+You teach through 4 lenses:
+1. Kubernetes
+2. AI / Agents
+3. Platform Engineering
+4. Product Thinking
+
+Return STRICT JSON.
+"""
+
+        response = client.responses.create(
+            model="gpt-5",
+            input=[
+                {"role": "system", "content": system_prompt},
+                {
+                    "role": "user",
+                    "content": f"""
+DATA:
+{json.dumps(payload, indent=2)}
+
+Return JSON:
+{{
+  "summary": "",
+  "answer": "",
+  "els": {{
+    "layer": "",
+    "explanation": "",
+    "next_steps": []
+  }},
+  "learning": {{
+    "kubernetes": "",
+    "ai": "",
+    "platform": "",
+    "product": ""
+  }},
+  "warnings": []
+}}
+"""
+                }
             ],
-            temperature=0.2,
         )
 
-        return response.choices[0].message.content
+        raw = response.output_text
+
+        try:
+            return json.loads(raw)
+        except Exception:
+            return {"error": raw}
 
     except Exception as e:
-        return f"LLM error: {str(e)}"
-
-
+        return {"error": str(e)}
