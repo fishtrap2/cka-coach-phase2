@@ -163,12 +163,20 @@ def ask_llm(question: str, context: str = "") -> CoachResponse:
     try:
         trace = build_trace(question, context)
         els_result = build_deterministic_els_result(question, context)
+        
+        els_prompt_result = {
+          "layer": els_result.get("layer", ""),
+          "layer_number": els_result.get("layer_number", ""),
+          "layer_name": els_result.get("layer_name", ""),
+          "explanation": els_result.get("explanation", ""),
+          "next_steps": els_result.get("next_steps", []),
+        }
 
         payload = {
-            "question": question,
-            "context": context[:MAX_CONTEXT_CHARS],
-            "els_result": els_result,
-            "agent_trace": trace,
+           "question": question,
+           "context": context[:MAX_CONTEXT_CHARS],
+           "els_result": els_prompt_result,
+           "agent_trace": trace,
         }
 
         system_prompt = """
