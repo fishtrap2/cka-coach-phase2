@@ -62,33 +62,44 @@ def build_trace(question: str, context: str):
 # --------------------------
 # Deterministic ELS selection
 # --------------------------
-def choose_primary_els_layer(question: str, context: str) -> tuple[str, int]:
+def choose_primary_els_layer(question: str, context: str) -> tuple[str, str]:
     q = question.lower()
     c = context.lower()
 
     if "kubelet" in q or "kubelet" in c or "node agent" in q:
-        return "L5 Node Agents (kubelet)", 5
+        return "L4 node_agents_and_networking", "4"
+
+    if "kube-proxy" in q or "cni" in q or "network" in q or "route" in q or "iptables" in q:
+        return "L4 node_agents_and_networking", "4"
 
     if "containerd" in q or "runc" in q or "cri" in q or "runtime" in q:
-        return "L4 Container Runtime (containerd)", 4
+        return "L3 container_runtime", "3" if "containerd" in q or "cri" in q else ("L2 oci_runtime", "2")
 
     if "pod" in q or "crashloop" in q or "pending" in q:
-        return "L8 Pods", 8
+        return "L8 application_pods", "8"
 
-    if "deployment" in q or "service" in q or "configmap" in q or "api object" in q:
-        return "L7 K8S Objects / API", 7
+    if "deployment" in q or "service" in q or "configmap" in q or "secret" in q:
+        return "L7 kubernetes_objects", "7"
 
-    if "scheduler" in q or "controller" in q or "control plane" in q or "etcd" in q:
-        return "L6 Controllers / Scheduling", 6
+    if "api server" in q or "apiserver" in q or "etcd" in q or "rest api" in q:
+        return "L6.5 api_layer", "6.5"
 
-    if "network" in q or "cni" in q or "route" in q or "iptables" in q:
-        return "L1 Network (CNI / kernel)", 1
+    if "scheduler" in q or "controller" in q or "control plane" in q:
+        return "L5 controllers", "5"
+
+    if "operator" in q:
+        return "L6 operators", "6"
 
     if "application" in q or "process" in q:
-        return "L9 Applications", 9
+        return "L9 applications", "9"
 
-    return "L7 K8S Objects / API", 7
+    if "kernel" in q or "namespace" in q or "cgroup" in q or "syscall" in q:
+        return "L1 linux_kernel", "1"
 
+    if "vm" in q or "hardware" in q or "cpu" in q or "memory" in q or "disk" in q:
+        return "L0 virtual_hardware", "0"
+
+    return "L7 kubernetes_objects", "7"
 
 def build_deterministic_els_result(question: str, context: str) -> ELSResult:
     """

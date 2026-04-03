@@ -1,47 +1,30 @@
-ELS_LAYERS = {
-    1: {
-        "name": "Physical Hardware",
-        "lives": ["CPU", "Memory", "Disk"],
-        "debug": ["lscpu", "lsblk", "free -m"],
-    },
-    2: {
-        "name": "Virtualization",
-        "lives": ["KVM", "GCE VM", "AWS EC2"],
-        "debug": ["virt-what"],
-    },
-    3: {
-        "name": "Guest OS",
-        "lives": ["Linux kernel", "systemd"],
-        "debug": ["uname -a", "cat /etc/os-release"],
-    },
-    4: {
-        "name": "Container Runtime",
-        "lives": ["containerd", "runc"],
-        "debug": ["crictl ps", "crictl info"],
-    },
-    5: {
-        "name": "Node Agents",
-        "lives": ["kubelet", "kube-proxy"],
-        "debug": ["systemctl status kubelet"],
-    },
-    6: {
-        "name": "Control Plane",
-        "lives": ["kube-apiserver", "scheduler", "controller-manager", "etcd"],
-        "debug": ["kubectl get pods -n kube-system"],
-    },
-    7: {
-        "name": "Kubernetes Objects",
-        "lives": ["Deployments", "Services"],
-        "debug": ["kubectl get all"],
-    },
-    8: {
-        "name": "Pods / Containers",
-        "lives": ["Pods"],
-        "debug": ["kubectl get pods -A"],
-    },
-    9: {
-        "name": "Application Processes",
-        "lives": ["application binaries"],
-        "debug": ["kubectl exec"],
-    },
-}
+from els import load_els_model
+
+
+def build_els_layers():
+    schema = load_els_model()
+    layers = {}
+
+    for layer in schema.get("layers", []):
+        layer_id = str(layer["id"])
+        entry = {
+            "id": layer_id,
+            "name": layer.get("name", ""),
+            "description": layer.get("description", ""),
+            "lives": layer.get("lives", ""),
+            "execution_type": layer.get("execution_type", ""),
+            "depends_on": layer.get("depends_on", []),
+            "primary_interfaces": layer.get("primary_interfaces", []),
+            "debug": layer.get("debug_commands", []),
+        }
+
+        # Preserve subcomponents for layer 4
+        if "subcomponents" in layer:
+            entry["subcomponents"] = layer["subcomponents"]
+
+        layers[layer_id] = entry
+
+    return layers
+
+
+ELS_LAYERS = build_els_layers()
