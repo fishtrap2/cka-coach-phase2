@@ -275,17 +275,17 @@ for lvl, name, _, _, _, _, key in layers:
             cleaned = clean_json(explanation)
 
             try:
-            parsed = json.loads(cleaned)
+                parsed = json.loads(cleaned)
 
-            st.subheader("ELS Analysis")
-            st.write(parsed.get("els", {}))
+                st.subheader("ELS Analysis")
+                st.write(parsed.get("els", {}))
 
-            st.subheader("Answer")
-            st.write(parsed.get("answer", ""))
+                st.subheader("Answer")
+                st.write(parsed.get("answer", ""))
 
-            st.subheader("Learning Views")
+                st.subheader("Learning Views")
 
-            colA, colB = st.columns(2)
+                colA, colB = st.columns(2)
 
             with colA:
                 st.markdown("**Kubernetes**")
