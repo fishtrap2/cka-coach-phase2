@@ -145,7 +145,7 @@ def _safe_kubectl_version_short() -> str:
     """
     Get a compact kubectl version view.
     """
-    return _safe_kubectl("kubectl version --short")
+    return _safe_kubectl("kubectl version")
 
 
 def _detect_cni_name() -> str:
