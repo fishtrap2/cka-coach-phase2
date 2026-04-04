@@ -53,6 +53,7 @@ cka-coach helps you:
 - visual layered model of the cluster
 - real-time state inspection
 - health indicators
+![ELS Model](docs/images/ELS.png)
 
 ### 🔍 Expand (evidence)
 - raw data from the cluster:
@@ -69,6 +70,7 @@ cka-coach helps you:
   - AI / Agents
   - Platform Engineering
   - Product Thinking
+![ELS Model](docs/images/Explain.png)
 
 ### 🧠 Deterministic + AI (Gen2)
 - Python computes the system model
@@ -93,12 +95,13 @@ cka-coach is built around three layers:
 The dashboard shows this architecture so students can understand both:
 - Kubernetes
 - and how modern AI systems are built
+![ELS Model](docs/images/Phase1-Arch.png)
 
 ---
 
 ## ⚙️ Getting Started
 
-### 1. Clone the repo
+### 1. Clone the repo on your CP node
 
 ```bash
 git clone <repo-url>
@@ -115,7 +118,7 @@ Start the Dashboard
 streamlit run ui/dashboard.py
 
 Then open browser to: (Note: LFS258 has you open up the (in my case GCP VM) FW ALOT so this should work and port 8501 s/b available:
-http://localhost:8501
+<Your CP external IP>:8501
 
 OR you can consume cka-coach  from CLI:
 python src/main.py ask "where does kubelet run?"
