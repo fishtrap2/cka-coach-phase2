@@ -219,6 +219,222 @@ def get_expand_text(key: str, state: dict) -> str:
         "health": health,
     }, indent=2))
 
+def render_architecture_panel():
+    """
+    Render a simple architecture diagram / mental model above the ELS table.
+
+    Goal:
+    help the student understand what they are looking at:
+    - the ELS table is the core system view
+    - Explain uses AI + deterministic ELS reasoning
+    - Expand shows raw evidence
+    - cka-coach itself can run as a pod inside the cluster
+    """
+    st.markdown("## How cka-coach works")
+    st.caption(
+        "Gen2 architecture: deterministic ELS model + structured state collection + AI explanation layer"
+    )
+
+    architecture_html = """
+    <style>
+    .arch-wrap {
+        border: 1px solid #00aa88;
+        border-radius: 10px;
+        padding: 14px;
+        margin-bottom: 18px;
+        background: #f7fffc;
+    }
+
+    .arch-grid {
+        display: grid;
+        grid-template-columns: 1fr 80px 1.2fr 80px 1fr;
+        gap: 10px;
+        align-items: center;
+        margin-top: 10px;
+        margin-bottom: 14px;
+    }
+
+    .arch-box {
+        border: 2px solid #0f766e;
+        border-radius: 12px;
+        padding: 12px;
+        background: white;
+        min-height: 110px;
+    }
+
+    .arch-title {
+        font-weight: 700;
+        font-size: 16px;
+        margin-bottom: 6px;
+        color: #134e4a;
+    }
+
+    .arch-text {
+        font-size: 13px;
+        line-height: 1.35;
+        color: #1f2937;
+    }
+
+    .arch-arrow {
+        text-align: center;
+        font-size: 28px;
+        color: #0f766e;
+        font-weight: bold;
+    }
+
+    .arch-subgrid {
+        display: grid;
+        grid-template-columns: 1fr 1fr 1fr;
+        gap: 10px;
+        margin-top: 8px;
+    }
+
+    .arch-small {
+        border: 1px solid #94a3b8;
+        border-radius: 10px;
+        padding: 10px;
+        background: #ffffff;
+        min-height: 120px;
+    }
+
+    .arch-small-title {
+        font-weight: 700;
+        font-size: 14px;
+        margin-bottom: 6px;
+        color: #0f172a;
+    }
+
+    .arch-note {
+        margin-top: 10px;
+        padding: 10px 12px;
+        border-left: 4px solid #0f766e;
+        background: #ecfeff;
+        color: #164e63;
+        font-size: 13px;
+    }
+
+    .arch-pill {
+        display: inline-block;
+        padding: 2px 8px;
+        border-radius: 999px;
+        background: #ccfbf1;
+        color: #115e59;
+        font-size: 12px;
+        font-weight: 600;
+        margin-bottom: 6px;
+    }
+    </style>
+
+    <div class="arch-wrap">
+      <div class="arch-grid">
+        <div class="arch-box">
+          <div class="arch-title">1. Student / UI</div>
+          <div class="arch-text">
+            The student uses the <b>ELS Console</b> to inspect the cluster.<br><br>
+            They can:
+            <ul>
+              <li>read the ELS layer table</li>
+              <li>click <b>Explain Lx</b> for AI help</li>
+              <li>open <b>Expand Lx</b> for raw evidence</li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="arch-arrow">→</div>
+
+        <div class="arch-box">
+          <div class="arch-pill">Can run as a pod in the student's cluster</div>
+          <div class="arch-title">2. cka-coach Gen2</div>
+          <div class="arch-text">
+            cka-coach collects structured cluster state, maps it into the
+            <b>ELS model</b>, and then uses an LLM to explain what is happening.<br><br>
+            This is the core of the learning system.
+          </div>
+        </div>
+
+        <div class="arch-arrow">→</div>
+
+        <div class="arch-box">
+          <div class="arch-title">3. Student-facing output</div>
+          <div class="arch-text">
+            The console below shows:
+            <ul>
+              <li><b>ELS table</b> = layered system view</li>
+              <li><b>Explain</b> = deterministic ELS + AI explanation</li>
+              <li><b>Expand</b> = raw collected evidence</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+
+      <div class="arch-subgrid">
+        <div class="arch-small">
+          <div class="arch-small-title">State Collector</div>
+          <div class="arch-text">
+            Collects structured evidence from:
+            <ul>
+              <li>pods</li>
+              <li>events</li>
+              <li>nodes</li>
+              <li>kubelet</li>
+              <li>containerd</li>
+              <li>network / routes</li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="arch-small">
+          <div class="arch-small-title">ELS Core</div>
+          <div class="arch-text">
+            The deterministic core of cka-coach.
+            It maps evidence into the Expanded Layered Stack so students learn
+            <b>where things live</b> and how layers relate.
+          </div>
+        </div>
+
+        <div class="arch-small">
+          <div class="arch-small-title">AI / Agent Layer</div>
+          <div class="arch-text">
+            The LLM does <b>explanation</b>, not truth creation.
+            It teaches through:
+            <ul>
+              <li>Kubernetes</li>
+              <li>AI / Agents</li>
+              <li>Platform</li>
+              <li>Product</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+
+      <div class="arch-note">
+        <b>Reading guide:</b> The ELS table below is the live layered view of the cluster.
+        <b>Expand</b> shows the raw evidence for a layer.
+        <b>Explain</b> uses structured state + deterministic ELS reasoning + the LLM to teach the student what that layer means.
+      </div>
+    </div>
+    """
+
+    st.markdown(architecture_html, unsafe_allow_html=True)
+
+    with st.expander("Why this is Gen2 and not just a simple chatbot"):
+        st.markdown(
+            """
+**cka-coach Gen2** is more than prompt + response:
+
+- **Deterministic layer model:** the ELS model is computed in Python, not invented by the LLM
+- **Structured evidence:** cka-coach collects real cluster/runtime state first
+- **Agent trace:** the app can show how it reasoned
+- **AI as explainer:** the model explains the evidence, rather than making up the system model
+- **Kubernetes-native direction:** cka-coach itself can be packaged and run as a pod inside the student's cluster
+
+That means the student is learning both:
+1. **how Kubernetes works**, and
+2. **how a modern agentic support system is built on Kubernetes**
+"""
+        )
+
+render_architecture_panel()
 
 # --------------------------
 # Collect State
