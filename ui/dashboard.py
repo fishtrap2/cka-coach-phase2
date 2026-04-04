@@ -1,22 +1,25 @@
 import streamlit as st
+import streamlit.components.v1 as components
 import sys
 import os
 import json
 from datetime import datetime
 
+# Allow imports from ../src
 sys.path.append(os.path.join(os.path.dirname(__file__), "..", "src"))
 
 from state_collector import collect_state
 from agent import ask_llm
 
 st.set_page_config(layout="wide")
-
 st.title("🧠 CKA Coach — ELS Console")
 st.subheader("Everything Lives Somewhere...")
 
 # --------------------------
-# Retro Styling (separate from table HTML)
+# Retro Styling
 # --------------------------
+# We render the ELS layer table as custom HTML so we can keep the
+# retro terminal aesthetic and fine-grained layout control.
 table_html = """
 <style>
 body {
@@ -60,20 +63,26 @@ body {
 # --------------------------
 # Controls
 # --------------------------
+# These are lightweight dashboard controls.
+# Auto Refresh is currently just a placeholder toggle for future expansion.
 col1, col2, col3 = st.columns([1, 1, 2])
 
 auto_refresh = col1.checkbox("Auto Refresh", value=False)
 interval = col2.slider("Refresh Interval (sec)", 2, 30, 5)
+
 if col3.button("Refresh Now"):
     st.rerun()
-
-# Note: this is a simple rerun toggle, not timed refresh.
-# A timed refresh can be added later with st_autorefresh.
 
 # --------------------------
 # Helpers
 # --------------------------
 def clean_json(response: str) -> str:
+    """
+    Strip markdown code fences from a model response if they exist.
+
+    The agent now tries to return raw JSON only, but this helper is still
+    useful as a defensive fallback for older/bad responses.
+    """
     if "```" in response:
         parts = response.split("```")
         if len(parts) > 1:
@@ -81,7 +90,37 @@ def clean_json(response: str) -> str:
     return response
 
 
+def normalize_explanation_output(explanation):
+    """
+    Normalize ask_llm() output into a dashboard-friendly dict.
+
+    Supports:
+    - dict output (preferred current path)
+    - JSON string output
+    - fenced ```json ... ``` output
+    - raw text fallback
+    """
+    if isinstance(explanation, dict):
+        return explanation
+
+    if not isinstance(explanation, str):
+        return {"error": f"Unexpected response type: {type(explanation).__name__}"}
+
+    cleaned = clean_json(explanation)
+
+    try:
+        return json.loads(cleaned)
+    except Exception:
+        return {"raw_text": explanation}
+
+
 def summarize(state: dict) -> dict:
+    """
+    Build the "Current" summary values shown in the ELS table.
+
+    This is not the full ELS reasoning engine. It is simply a compact
+    operator-style summary of the current collected cluster state.
+    """
     runtime = state.get("runtime", {})
     health = state.get("health", {})
     versions = state.get("versions", {})
@@ -129,6 +168,9 @@ def summarize(state: dict) -> dict:
 
 
 def map_versions_to_layers(state: dict) -> dict:
+    """
+    Map version strings to visible ELS table rows.
+    """
     v = state.get("versions", {})
     return {
         "L9": "",
@@ -138,7 +180,7 @@ def map_versions_to_layers(state: dict) -> dict:
         "L6": v.get("api", ""),
         "L5": v.get("api", ""),
         "L4.1": v.get("kubelet", ""),
-        "L4.2": v.get("api", ""),      # kube-proxy usually tracks cluster version
+        "L4.2": v.get("api", ""),
         "L4.3": v.get("cni", ""),
         "L3": v.get("containerd", ""),
         "L2": v.get("runc", ""),
@@ -148,6 +190,12 @@ def map_versions_to_layers(state: dict) -> dict:
 
 
 def get_expand_text(key: str, state: dict) -> str:
+    """
+    Return the raw evidence block for the chosen visible row.
+
+    This is what the student sees when they expand a layer. It is useful
+    as a low-level inspection view beside the higher-level ELS explanation.
+    """
     runtime = state.get("runtime", {})
     versions = state.get("versions", {})
     health = state.get("health", {})
@@ -171,29 +219,12 @@ def get_expand_text(key: str, state: dict) -> str:
         "health": health,
     }, indent=2))
 
-def normalize_explanation_output(explanation):
-    """
-    Supports either:
-    - dict output (preferred Gen2 path)
-    - JSON string output
-    - fenced ```json ... ``` output
-    """
-    if isinstance(explanation, dict):
-        return explanation
-
-    if not isinstance(explanation, str):
-        return {"error": f"Unexpected response type: {type(explanation).__name__}"}
-
-    cleaned = clean_json(explanation)
-
-    try:
-        return json.loads(cleaned)
-    except Exception:
-        return {"raw_text": explanation}
 
 # --------------------------
 # Collect State
 # --------------------------
+# This is now the shared evidence source for the dashboard.
+# Important: the agent also receives this same structured state object.
 with st.spinner("Collecting state..."):
     state = collect_state()
 
@@ -202,8 +233,10 @@ versions_map = map_versions_to_layers(state)
 health = state.get("health", {})
 
 # --------------------------
-# Layer Definitions
+# Layer Definitions for Table UI
 # --------------------------
+# These are the visual rows used in the dashboard table.
+# They are related to ELS, but are primarily UI metadata for display.
 layers = [
     ("9", "Applications", "User-facing application logic", "application processes living inside containers", "user_process", "app specific", "L9"),
     ("8", "Pods", "Pod abstraction wrapping one or more containers", "kubelet-managed containers on nodes", "abstraction/meta", "kubectl get pods -o wide", "L8"),
@@ -221,7 +254,7 @@ layers = [
 ]
 
 # --------------------------
-# Build table rows ONCE
+# Build table rows once
 # --------------------------
 rows = ""
 
@@ -256,7 +289,7 @@ for lvl, name, description, lives, exec_type, api, key in layers:
     """
 
 # --------------------------
-# Render table ONCE
+# Render table
 # --------------------------
 table_html += f"""
 <table class="els-table">
@@ -273,14 +306,16 @@ table_html += f"""
     {rows}
 </table>
 """
-import streamlit.components.v1 as components
-components.html(table_html, height=800, scrolling=True)
 
+components.html(table_html, height=1000, scrolling=True)
 st.caption(f"Last refresh: {datetime.now().strftime('%H:%M:%S')}")
 
 # --------------------------
 # Explain + Expand
 # --------------------------
+# This section gives the student:
+# - a low-level "Expand" view of evidence
+# - a higher-level Explain path powered by the Gen2 agent
 st.divider()
 
 for lvl, name, _, _, _, _, key in layers:
@@ -296,15 +331,20 @@ for lvl, name, _, _, _, _, key in layers:
             st.text(get_expand_text(key, state)[:3000])
 
     if clicked:
+        # Important:
+        # ask_llm() now receives the full structured collected state,
+        # not just one text snippet. This keeps the ELS mapping more accurate.
         explanation = ask_llm(
             f"Explain current state of {name}",
-            context=get_expand_text(key, state)
+            state
         )
 
         parsed = normalize_explanation_output(explanation)
 
         st.markdown(f"### Layer {lvl} — {name}")
 
+        # Full-width output so the explanation is readable and not squeezed
+        # into the narrow left button column.
         with st.container():
             if "error" in parsed:
                 st.error(parsed["error"])
@@ -331,22 +371,23 @@ for lvl, name, _, _, _, _, key in layers:
 
                 next_steps = els.get("next_steps", [])
                 if next_steps:
-                  st.markdown("**Next Steps:**")
-                  for step in next_steps:
-                     st.write(f"- {step}")
+                    st.markdown("**Next Steps:**")
+                    for step in next_steps:
+                        st.write(f"- {step}")
 
                 mapped_context = els.get("mapped_context", {})
                 if mapped_context:
-                   with st.expander("ELS mapped context"):
-                       st.json(mapped_context)
+                    with st.expander("ELS mapped context"):
+                        st.json(mapped_context)
+
             with tab_answer:
                 st.markdown("#### Answer")
                 st.write(parsed.get("answer", ""))
 
-                summary = parsed.get("summary", "")
-                if summary:
+                summary_text = parsed.get("summary", "")
+                if summary_text:
                     st.markdown("#### Summary")
-                    st.write(summary)
+                    st.write(summary_text)
 
                 warnings = parsed.get("warnings", [])
                 if warnings:

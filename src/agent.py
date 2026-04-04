@@ -7,110 +7,190 @@ from els import load_els_model
 from els_model import ELS_LAYERS
 from els_mapper import map_to_els
 
+# OpenAI client used for the explanatory / teaching layer.
+# Important: the model is no longer the owner of the ELS logic.
+# Python computes the deterministic ELS result first, then the LLM explains it.
 client = OpenAI()
 
 
-# --------------------------
-# Parse raw context into state
-# --------------------------
-def build_state_from_context(context: str) -> dict:
+def build_trace(question: str, state: dict):
     """
-    Current project passes plain-text cluster context around.
-    We turn that into a simple state object that els_mapper can consume.
+    Build a simple deterministic trace of what cka-coach did.
+
+    This is useful for:
+    - teaching students how the agent reasoned
+    - debugging the system
+    - making the AI behavior less "mysterious"
+
+    We derive a lightweight trace from the structured state rather than
+    asking the model to hallucinate a trace afterward.
     """
-    text = context[:MAX_CONTEXT_CHARS]
+    runtime = state.get("runtime", {})
+    versions = state.get("versions", {})
 
-    return {
-        "pods": text,
-        "events": text,
-        "nodes": text,
-        "kubelet": text,
-        "containerd": text,
-        "containers": text,
-        "processes": text,
-        "network": text,
-        "routes": text,
-    }
-
-
-# --------------------------
-# Agent Trace
-# --------------------------
-def build_trace(question: str, context: str):
     return [
         {
             "step": 1,
             "action": "Interpret question",
-            "why": "Determine which Kubernetes layer and resource type is relevant",
+            "why": "Determine which Kubernetes layer or runtime concept the student is asking about",
             "outcome": question,
         },
         {
             "step": 2,
-            "action": "Build ELS state map",
-            "why": "Map current cluster evidence into the Expanded Layered Stack model",
-            "outcome": f"context size={len(context)} chars",
+            "action": "Normalize collected cluster state",
+            "why": "Use structured evidence instead of one large unstructured text blob",
+            "outcome": f"runtime_keys={list(runtime.keys())}, version_keys={list(versions.keys())}",
         },
         {
             "step": 3,
+            "action": "Map evidence into ELS layers",
+            "why": "Assign the collected evidence to the most relevant ELS layers",
+            "outcome": "ELS mapping complete",
+        },
+        {
+            "step": 4,
             "action": "Select primary ELS layer",
-            "why": "Choose the most relevant layer to explain first, while preserving the broader layered view",
+            "why": "Choose the best starting layer for the student's question",
             "outcome": "Primary layer selected",
         },
     ]
 
 
-# --------------------------
-# Deterministic ELS selection
-# --------------------------
-def choose_primary_els_layer(question: str, context: str) -> tuple[str, str]:
-    q = question.lower()
-    c = context.lower()
+def normalize_collected_state(collected_state: dict) -> dict:
+    """
+    Convert state_collector.collect_state() output into the flatter normalized
+    structure expected by els_mapper.map_to_els().
 
-    if "kubelet" in q or "kubelet" in c or "node agent" in q:
+    Why this exists:
+    - dashboard.py already uses collect_state()
+    - collect_state() returns nested sections like runtime / versions / health
+    - els_mapper.py wants a flatter dictionary keyed by evidence type
+
+    This function is the bridge between those two shapes.
+    """
+    runtime = collected_state.get("runtime", {})
+    versions = collected_state.get("versions", {})
+
+    return {
+        "pods": runtime.get("pods", ""),
+        "events": runtime.get("events", ""),
+        "nodes": runtime.get("nodes", ""),
+        "kubelet": runtime.get("kubelet", ""),
+        "containerd": runtime.get("containerd", ""),
+        "containers": runtime.get("containers", ""),
+        "processes": runtime.get("processes", ""),
+        "network": runtime.get("network", ""),
+        "routes": runtime.get("routes", ""),
+        "api": versions.get("api", ""),
+        "k8s_json": versions.get("k8s_json", ""),
+    }
+
+
+def choose_primary_els_layer(question: str, normalized_state: dict) -> tuple[str, str]:
+    """
+    Deterministically choose the single most relevant ELS layer for the question.
+
+    Important:
+    - this is a heuristic router, not a full inference engine
+    - it gives the model a stable starting point
+    - it prevents the LLM from inventing its own layer taxonomy
+
+    Returns:
+      (layer_label, layer_id_as_string)
+
+    Example:
+      ("L4 node_agents_and_networking", "4")
+    """
+    q = question.lower()
+
+    # Questions about kubelet, kube-proxy, CNI, iptables, routes, etc.
+    # belong primarily to the node-agent/networking layer.
+    if "kubelet" in q or "node agent" in q:
         return "L4 node_agents_and_networking", "4"
 
     if "kube-proxy" in q or "cni" in q or "network" in q or "route" in q or "iptables" in q:
         return "L4 node_agents_and_networking", "4"
 
-    if "containerd" in q or "runc" in q or "cri" in q or "runtime" in q:
-        return "L3 container_runtime", "3" if "containerd" in q or "cri" in q else ("L2 oci_runtime", "2")
+    # Questions about containerd / CRI belong to the container runtime layer.
+    if "containerd" in q or "cri" in q:
+        return "L3 container_runtime", "3"
 
+    # Questions about runc / OCI belong to the OCI runtime layer.
+    if "runc" in q or "oci" in q:
+        return "L2 oci_runtime", "2"
+
+    # Pod lifecycle issues belong primarily to the pod abstraction layer.
     if "pod" in q or "crashloop" in q or "pending" in q:
         return "L8 application_pods", "8"
 
+    # Objects like deployments, services, configmaps, secrets map to k8s objects.
     if "deployment" in q or "service" in q or "configmap" in q or "secret" in q:
         return "L7 kubernetes_objects", "7"
 
+    # Questions about the apiserver / etcd / REST API go to the API layer.
     if "api server" in q or "apiserver" in q or "etcd" in q or "rest api" in q:
         return "L6.5 api_layer", "6.5"
 
+    # Scheduler / controllers / control plane questions generally map to controllers.
     if "scheduler" in q or "controller" in q or "control plane" in q:
         return "L5 controllers", "5"
 
+    # Operator questions map to custom controllers/operators.
     if "operator" in q:
         return "L6 operators", "6"
 
+    # App/process questions go to the application layer.
     if "application" in q or "process" in q:
         return "L9 applications", "9"
 
+    # Kernel primitives map to the linux kernel layer.
     if "kernel" in q or "namespace" in q or "cgroup" in q or "syscall" in q:
         return "L1 linux_kernel", "1"
 
+    # VM / hardware / compute resource questions map to virtual hardware.
     if "vm" in q or "hardware" in q or "cpu" in q or "memory" in q or "disk" in q:
         return "L0 virtual_hardware", "0"
 
+    # Fallback strategy:
+    # if we have pod evidence, start from pods;
+    # otherwise fall back to kubernetes objects.
+    if normalized_state.get("pods"):
+        return "L8 application_pods", "8"
+
     return "L7 kubernetes_objects", "7"
 
-def build_deterministic_els_result(question: str, context: str) -> ELSResult:
-    """
-    This is the important Phase 1 shift:
-    ELS becomes deterministic project logic, not just prompt material.
-    """
-    _els_schema = load_els_model()
-    state = build_state_from_context(context)
-    mapped = map_to_els(state)
 
-    primary_layer_key, layer_num = choose_primary_els_layer(question, context)
+def build_deterministic_els_result(question: str, collected_state: dict) -> ELSResult:
+    """
+    Build the deterministic ELS result used as authoritative project logic.
+
+    This is the heart of the architecture shift:
+    - Python computes the ELS result
+    - the LLM explains and teaches from it
+    - the LLM does NOT invent the ELS result from scratch
+
+    Output includes:
+    - primary layer
+    - layer number
+    - layer name
+    - explanation
+    - next debug steps
+    - full mapped_context (for debugging / dashboard inspection)
+    """
+    # Load the schema mainly to ensure the source-of-truth model exists and is available.
+    # Even if we do not use the raw schema object directly here, this keeps the dependency explicit.
+    _els_schema = load_els_model()
+
+    # Normalize the nested collector output into the flatter mapper input.
+    normalized_state = normalize_collected_state(collected_state)
+
+    # Build a per-layer evidence map for visibility/debugging.
+    mapped = map_to_els(normalized_state)
+
+    # Select the primary layer for the current question.
+    primary_layer_key, layer_num = choose_primary_els_layer(question, normalized_state)
+
+    # Look up layer metadata from the schema-derived ELS_LAYERS structure.
     layer_meta = ELS_LAYERS.get(layer_num, {})
 
     layer_name = layer_meta.get("name", primary_layer_key)
@@ -119,13 +199,14 @@ def build_deterministic_els_result(question: str, context: str) -> ELSResult:
     explanation = (
         f"Based on the current question and collected context, the most relevant ELS layer is "
         f"{primary_layer_key}. In your ELS model, this corresponds to '{layer_name}'. "
-        f"This layer is the best starting point because it is the closest match to the user's intent "
-        f"and the visible cluster evidence."
+        f"This layer is the best starting point because it most closely matches the student's question "
+        f"and the structured cluster evidence."
     )
 
-    next_steps = debug_cmds[:]
-    if not next_steps:
-        next_steps = ["Inspect the most relevant cluster object and work down the stack."]
+    # Prefer schema-derived debug commands when available.
+    next_steps = debug_cmds[:] if debug_cmds else [
+        "Inspect the most relevant cluster object and work down the stack."
+    ]
 
     return {
         "layer": primary_layer_key,
@@ -137,13 +218,25 @@ def build_deterministic_els_result(question: str, context: str) -> ELSResult:
     }
 
 
-# --------------------------
-# Normalize model output
-# --------------------------
 def normalize_response(raw: str) -> CoachResponse:
+    """
+    Normalize model output into the CoachResponse shape.
+
+    Why this exists:
+    - sometimes models still wrap JSON in ```json fences
+    - we want the CLI/dashboard to remain stable even if formatting drifts
+
+    Behavior:
+    - strip markdown fences if present
+    - try json.loads()
+    - if parsing fails, return a fallback object with raw_text
+    """
     text = raw.strip()
 
-    # Strip markdown fenced code block if present
+    # Handle fenced JSON like:
+    # ```json
+    # { ... }
+    # ```
     if text.startswith("```"):
         parts = text.split("```")
         if len(parts) >= 2:
@@ -176,27 +269,70 @@ def normalize_response(raw: str) -> CoachResponse:
             "warnings": ["Response was not valid JSON."],
         }
 
-# --------------------------
-# Main LLM function
-# --------------------------
-def ask_llm(question: str, context: str = "") -> CoachResponse:
+
+def build_llm_context(collected_state: dict) -> str:
+    """
+    Build a compact context payload for the model.
+
+    Important product decision:
+    - do NOT send the entire mapped_context to the LLM
+    - do NOT send every raw collector field in full
+    - keep the prompt smaller for speed and focus
+
+    We include only the most relevant structured evidence, truncated to
+    reasonable lengths so dashboard Explain buttons stay responsive.
+    """
+    normalized = normalize_collected_state(collected_state)
+
+    compact = {
+        "nodes": normalized.get("nodes", "")[:800],
+        "pods": normalized.get("pods", "")[:800],
+        "events": normalized.get("events", "")[:500],
+        "kubelet": normalized.get("kubelet", "")[:400],
+        "containerd": normalized.get("containerd", "")[:400],
+        "network": normalized.get("network", "")[:500],
+        "routes": normalized.get("routes", "")[:400],
+        "api": normalized.get("api", ""),
+    }
+
+    return json.dumps(compact, indent=2)[:MAX_CONTEXT_CHARS]
+
+
+def ask_llm(question: str, collected_state: dict) -> CoachResponse:
+    """
+    Main entrypoint used by CLI and dashboard.
+
+    Input:
+    - question: student's question
+    - collected_state: structured output from state_collector.collect_state()
+
+    Flow:
+    1. build deterministic trace
+    2. build deterministic ELS result
+    3. send a compact evidence package + ELS result to the model
+    4. parse model JSON
+    5. overwrite model-returned ELS with deterministic project logic
+    6. attach deterministic trace
+    """
     try:
-        trace = build_trace(question, context)
-        els_result = build_deterministic_els_result(question, context)
-        
+        # Deterministic project-side reasoning
+        trace = build_trace(question, collected_state)
+        els_result = build_deterministic_els_result(question, collected_state)
+
+        # Only send the compact subset of ELS needed for explanation.
+        # Do NOT send mapped_context here, because it bloats prompts and slows everything down.
         els_prompt_result = {
-          "layer": els_result.get("layer", ""),
-          "layer_number": els_result.get("layer_number", ""),
-          "layer_name": els_result.get("layer_name", ""),
-          "explanation": els_result.get("explanation", ""),
-          "next_steps": els_result.get("next_steps", []),
+            "layer": els_result.get("layer", ""),
+            "layer_number": els_result.get("layer_number", ""),
+            "layer_name": els_result.get("layer_name", ""),
+            "explanation": els_result.get("explanation", ""),
+            "next_steps": els_result.get("next_steps", []),
         }
 
         payload = {
-           "question": question,
-           "context": context[:MAX_CONTEXT_CHARS],
-           "els_result": els_prompt_result,
-           "agent_trace": trace,
+            "question": question,
+            "context": build_llm_context(collected_state),
+            "els_result": els_prompt_result,
         }
 
         system_prompt = """
@@ -204,7 +340,6 @@ You are cka-coach, a Kubernetes + AI systems tutor.
 
 You MUST:
 - Treat the provided ELS result as deterministic project logic
-- Use the provided agent trace
 - Use ONLY the provided context
 - Avoid guessing when evidence is incomplete
 - Explain through 4 lenses:
@@ -213,13 +348,9 @@ You MUST:
   3. Platform Engineering
   4. Product Thinking
 
-Important:
-- Do not replace or contradict the provided ELS result unless you clearly say the evidence is incomplete.
-- Expand and teach from the ELS result; do not invent a different layered analysis.
-
-Return STRICT JSON only.
+Return ONLY valid JSON.
 Do not wrap the JSON in markdown fences.
-Do not add commentary before or after the JSON
+Do not add commentary before or after the JSON.
 """
 
         user_prompt = f"""
@@ -235,8 +366,7 @@ Return JSON with exactly this shape:
     "layer_number": "ELS number",
     "layer_name": "ELS layer name",
     "explanation": "ELS-based reasoning",
-    "next_steps": ["step 1", "step 2"],
-    "mapped_context": {{}}
+    "next_steps": ["step 1", "step 2"]
   }},
   "learning": {{
     "kubernetes": "what this teaches about Kubernetes",
@@ -244,18 +374,8 @@ Return JSON with exactly this shape:
     "platform": "what this teaches about platform engineering",
     "product": "what this teaches about product thinking"
   }},
-  "agent_trace": [
-    {{
-      "step": 1,
-      "action": "what the agent did",
-      "why": "why it did that",
-      "outcome": "what it found"
-    }}
-  ],
   "warnings": ["warning 1"]
 }}
-
-Use the provided els_result as the authoritative ELS analysis input.
 """
 
         response = client.responses.create(
@@ -268,11 +388,13 @@ Use the provided els_result as the authoritative ELS analysis input.
 
         parsed = normalize_response(response.output_text)
 
-        # Preserve deterministic ELS if model omits or weakens it
+        # Enforce deterministic project logic after model response.
+        # Even if the model returns its own ELS block, we overwrite it with the
+        # Python-generated result so the product stays consistent and trustworthy.
         parsed["els"] = els_result
 
-        if not parsed.get("agent_trace"):
-            parsed["agent_trace"] = trace
+        # Same idea for the agent trace: do not let the model invent it.
+        parsed["agent_trace"] = trace
 
         return parsed
 
