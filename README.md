@@ -21,4 +21,4 @@
 > 
 > Learn Kubernetes *system* the way it actually works — through layers, evidence, and explanation.
 
-![ELS Model](docs/images/els-model.png
+![ELS Model](docs/images/els-model.png)
