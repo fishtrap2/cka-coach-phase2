@@ -16,10 +16,10 @@ import os
 #
 #Best overall architecture choice
 #
-#For a production-quality CKA Coach, I would use:
+#For CKA Coach as a prototype, use the mini model or as stated here:
 #
-#      gpt-5.4 as the main reasoning model
-#      gpt-5.4-mini for faster/cheaper interactive UI turns
+#      gpt-5.4 as the main reasoning model (For deeper answers, but more expensive)
+#      gpt-5.4-mini for faster/cheaper interactive UI turns (recommended for most interactions with cka-coach as of phase1)
 #      text-embedding-3-small or text-embedding-3-large for RAG / semantic search
 #      gpt-4.1 or gpt-4.1-mini when you want strong instruction following and predictable structured output without paying for full reasoning
 #      gpt-4o only if you want image or screenshot understanding, such as analyzing Kubernetes diagrams, dashboards, or screenshots of terminal output/UI states
@@ -27,7 +27,7 @@ import os
 # Recommendation:
 # - use a faster/smaller model for interactive dashboard "Explain" clicks
 # - use a larger model later only for deeper analysis modes if needed
-OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-5.4")
+OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-5.4-mini")
 
 # --------------------------
 # Prompt size control
