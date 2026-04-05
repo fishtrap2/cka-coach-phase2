@@ -298,7 +298,7 @@ def build_llm_context(collected_state: dict) -> str:
     return json.dumps(compact, indent=2)[:MAX_CONTEXT_CHARS]
 
 
-def ask_llm(question: str, collected_state: dict) -> CoachResponse:
+def ask_llm(question: str, collected_state: dict, concise: bool = False, allow_web: bool = False) -> CoachResponse:
     """
     Main entrypoint used by CLI and dashboard.
 
@@ -333,6 +333,8 @@ def ask_llm(question: str, collected_state: dict) -> CoachResponse:
             "question": question,
             "context": build_llm_context(collected_state),
             "els_result": els_prompt_result,
+            "concise": concise,
+            "allow_web": allow_web,
         }
 
         system_prompt = """
@@ -358,6 +360,18 @@ Do not add commentary before or after the JSON.
 DATA:
 {json.dumps(payload, indent=2)}
 
+If "concise" is true:
+- Keep summary and answer short (2-4 sentences)
+- Keep answer focused and direct
+- Keep next_steps minimal (max 3)
+- Limit warnings to severe or critical items (BUT ALWAYS Security ISSUES)
+
+If "allow_web" is true:
+- You may use general Kubernetes knowledge beyond the provided context
+- Clearly distinguish:
+  - what is observed in the cluster
+  - what is general/external knowledge
+
 Return JSON with exactly this shape:
 {{
   "summary": "short summary",
@@ -365,7 +379,6 @@ Return JSON with exactly this shape:
   "els": {{
     "layer": "primary ELS layer",
     "layer_number": "ELS number",
-    "layer_name": "ELS layer name",
     "explanation": "ELS-based reasoning",
     "next_steps": ["step 1", "step 2"]
   }},
