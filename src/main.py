@@ -110,7 +110,7 @@ def ask(
     # Summary
     # --------
     from config import OPENAI_MODEL
-    print("\n[bold]Summary API USING: ({OPENAI_MODEL})[/bold]")
+    print(f"\n[bold]Summary API USING: ({OPENAI_MODEL})[/bold]")
     print(result.get("summary", ""))
 
     # -------
