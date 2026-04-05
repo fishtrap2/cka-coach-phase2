@@ -337,6 +337,29 @@ def ask_llm(question: str, collected_state: dict, concise: bool = False, allow_w
             "allow_web": allow_web,
         }
 
+knowledge_policy = """
+Use only the provided cluster context.
+Do not use outside knowledge.
+"""
+
+if allow_web:
+    knowledge_policy = """
+Use the provided cluster context first.
+You may also use general background knowledge when needed.
+Do NOT claim to have performed a live web lookup.
+For compatibility, support matrix, or version questions:
+- clearly separate cluster evidence from background knowledge
+- state when official vendor documentation is still required for confirmation
+"""
+
+concise_policy = ""
+if concise:
+    concise_policy = """
+Keep summary and answer short and direct.
+Keep next_steps to at most 3 items.
+Keep warnings minimal and important.
+"""
+
         system_prompt = """
 You are cka-coach, a Kubernetes + AI systems tutor.
 
@@ -348,23 +371,16 @@ Rules:
 - Return ONLY valid JSON.
 - Do not wrap the JSON in markdown fences.
 - Do not add commentary before or after the JSON.
+Knowledge policy:
+{knowledge_policy}
+
+Style policy:
+{concise_policy}
 """
 
         user_prompt = f"""
 DATA:
 {json.dumps(payload, indent=2)}
-
-If "concise" is true:
-- Keep summary and answer short (4-8 sentences)
-- Keep answer focused and direct
-- Keep next_steps minimal (max 3)
-- Limit warnings to severe or critical items (BUT ALWAYS Security ISSUES)
-
-If "allow_web" is true:
-- You may use general Kubernetes knowledge beyond the provided context
-- Clearly distinguish:
-  - what is observed in the cluster
-  - what is general/external knowledge
 
 Return JSON with exactly this shape:
 {{
