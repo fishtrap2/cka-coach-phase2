@@ -337,30 +337,29 @@ def ask_llm(question: str, collected_state: dict, concise: bool = False, allow_w
             "allow_web": allow_web,
         }
 
-knowledge_policy = """
-Use only the provided cluster context.
-Do not use outside knowledge.
-"""
+        knowledge_policy = """
+        Use only the provided cluster context.
+        Do not use outside knowledge.
+        """
 
-if allow_web:
-    knowledge_policy = """
-Use the provided cluster context first.
-You may also use general background knowledge when needed.
-Do NOT claim to have performed a live web lookup.
-For compatibility, support matrix, or version questions:
-- clearly separate cluster evidence from background knowledge
-- state when official vendor documentation is still required for confirmation
-"""
+       if allow_web:
+           knowledge_policy = """
+       Use the provided cluster context first.
+       You may also use general background knowledge when needed.
+       Do NOT claim to have performed a live web lookup.
+       For compatibility, support matrix, or version questions:
+       - clearly separate cluster evidence from background knowledge
+       - state when official vendor documentation is still required for confirmation
+       """
 
-concise_policy = ""
-if concise:
-    concise_policy = """
-Keep summary and answer short and direct.
-Keep next_steps to at most 3 items.
-Keep warnings minimal and important.
-"""
-
-        system_prompt = """
+       concise_policy = ""
+       if concise:
+         concise_policy = """
+       Keep summary and answer short and direct.
+       Keep next_steps to at most 3 items.
+       Keep warnings minimal and important.
+       """
+       system_prompt = """
 You are cka-coach, a Kubernetes + AI systems tutor.
 
 Rules:
