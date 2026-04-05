@@ -27,7 +27,7 @@ import os
 # Recommendation:
 # - use a faster/smaller model for interactive dashboard "Explain" clicks
 # - use a larger model later only for deeper analysis modes if needed
-OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-5.4-mini")
+OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-5.4")
 
 # --------------------------
 # Prompt size control
