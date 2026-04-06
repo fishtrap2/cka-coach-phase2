@@ -147,7 +147,7 @@ def ask(
     # This is the deterministic project-side ELS result.
     # It is generated in Python and attached after the LLM response so that
     # the app remains consistent and trustworthy.
-    #els = result.get("els", {})
+    els = result.get("els", {})
 
     #print("\n[bold]ELS[/bold]")
     #print(f"Layer: {els.get('layer', '')}")
