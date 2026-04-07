@@ -502,6 +502,43 @@ layers = [
     ("0", "VM/Infra", "Virtualized CPU, memory, network interfaces", "hypervisor-provided abstraction", "virtualization_layer", "lscpu ; lsblk", "L0"),
 ]
 
+def layer_status(key: str, health: dict):
+    """
+    Map ELS UI rows to their derived health status.
+
+    Returns:
+    - True  => confirmed healthy
+    - False => confirmed unhealthy
+    - None  => unknown / visibility-limited
+    """
+    if key == "L8":
+        return health.get("pods_ok")
+    if key == "L7":
+        return health.get("api_access_ok")
+    if key == "L6.5":
+        return health.get("api_access_ok")
+    if key == "L6":
+        return health.get("api_access_ok")
+    if key == "L5":
+        return health.get("events_ok")
+    if key == "L4.1":
+        return health.get("kubelet_ok")
+    if key == "L4.2":
+        return None
+    if key == "L4.3":
+        return health.get("cni_ok")
+    if key == "L3":
+        return health.get("containerd_ok")
+    if key == "L2":
+        return health.get("runc_ok")
+    if key == "L1":
+        return health.get("kernel_ok")
+    if key == "L0":
+        return True
+    if key == "L9":
+        return None
+    return None
+
 # --------------------------
 # Build table rows once
 # --------------------------
@@ -516,30 +553,17 @@ for lvl, name, description, lives, exec_type, api, key in layers:
     # 🔴 = confirmed unhealthy
     # 🟡 = unknown / visibility-limited (NEW default for Phase 1 container mode)
 
-    row_color = "#332200"   # amber default
+    status = layer_status(key, health)
+
+    row_color = "#332200"
     health_icon = "🟡"
 
-    # --- RED (explicit failures) ---
-    if key == "L8" and (health.get("pods_pending", False) or health.get("pods_crashloop", False)):
-        row_color = "#220000"
-        health_icon = "🔴"
-
-    elif key == "L4.1" and health.get("kubelet_ok") is False:
-        row_color = "#220000"
-        health_icon = "🔴"
-
-    elif key == "L3" and health.get("containerd_ok") is False:
-        row_color = "#220000"
-        health_icon = "🔴"
-
-    # --- GREEN (explicitly confirmed healthy ONLY) ---
-    elif key == "L4.1" and health.get("kubelet_ok") is True:
-        row_color = "#001100"
-        health_icon = "🟢"
-
-    elif key == "L3" and health.get("containerd_ok") is True:
-        row_color = "#001100"
-        health_icon = "🟢"
+    if status is True:
+      row_color = "#001100"
+      health_icon = "🟢"
+    elif status is False:
+      row_color = "#220000"
+      health_icon = "🔴"
 
     # --- everything else stays AMBER ---
 
