@@ -178,26 +178,30 @@ def _detect_cni_name() -> str:
     return "unknown"
 
 
-def _health_flags(runtime: Dict[str, str]) -> Dict[str, Any]:
+def _health_flags(runtime: Dict[str, str], versions: Dict[str, str]) -> Dict[str, Any]:
     """
-    Derive health flags from collected runtime text.
+    Derive health flags from collected runtime + version text.
 
-    Phase 1 rule:
-    - True  = confirmed healthy
-    - False = confirmed unhealthy
-    - None  = unknown / visibility-limited (VERY IMPORTANT)
+    True  = confirmed healthy
+    False = confirmed unhealthy
+    None  = unknown / visibility-limited
     """
 
-    pods_text = runtime.get("pods", "")
+    pods_text = runtime.get("pods", "").lower()
+    events_text = runtime.get("events", "").lower()
+    nodes_text = runtime.get("nodes", "").lower()
     kubelet_text = runtime.get("kubelet", "").lower()
     containerd_text = runtime.get("containerd", "").lower()
 
-    pods_pending = "pending" in pods_text.lower()
-    pods_crashloop = "crashloopbackoff" in pods_text.lower()
+    api_text = versions.get("api", "").lower()
+    runc_text = versions.get("runc", "").lower()
+    kernel_text = versions.get("kernel", "").lower()
+    cni_text = versions.get("cni", "").lower()
 
-    # --------------------------
-    # kubelet health
-    # --------------------------
+    pods_pending = "pending" in pods_text
+    pods_crashloop = "crashloopbackoff" in pods_text
+
+    # kubelet
     if "systemctl not available" in kubelet_text:
         kubelet_ok = None
     elif "not installed" in kubelet_text or "not on path" in kubelet_text:
@@ -209,9 +213,7 @@ def _health_flags(runtime: Dict[str, str]) -> Dict[str, Any]:
     else:
         kubelet_ok = None
 
-    # --------------------------
-    # containerd health
-    # --------------------------
+    # containerd
     if "systemctl not available" in containerd_text:
         containerd_ok = None
     elif "not installed" in containerd_text or "not on path" in containerd_text:
@@ -223,28 +225,71 @@ def _health_flags(runtime: Dict[str, str]) -> Dict[str, Any]:
     else:
         containerd_ok = None
 
+    # pods
+    if "kubectl not installed" in pods_text:
+        pods_ok = None
+    elif "no resources found" in pods_text:
+        pods_ok = True
+    elif "pending" in pods_text or "crashloopbackoff" in pods_text:
+        pods_ok = False
+    elif pods_text.strip():
+        pods_ok = True
+    else:
+        pods_ok = None
+
+    # API / kubectl access
+    if "kubectl not installed" in api_text:
+        api_access_ok = None
+    elif "client version" in api_text and "server version" in api_text:
+        api_access_ok = True
+    else:
+        api_access_ok = None
+
+    # events
+    if "kubectl not installed" in events_text:
+        events_ok = None
+    elif events_text.strip():
+        events_ok = True
+    else:
+        events_ok = None
+
+    # nodes
+    if "kubectl not installed" in nodes_text:
+        nodes_ok = None
+    elif nodes_text.strip():
+        nodes_ok = True
+    else:
+        nodes_ok = None
+
+    # runc
+    if "not installed" in runc_text or "not on path" in runc_text:
+        runc_ok = None
+    elif "runc version" in runc_text:
+        runc_ok = True
+    else:
+        runc_ok = None
+
+    # kernel
+    kernel_ok = True if kernel_text.strip() else None
+
+    # cni
+    if cni_text in {"", "unknown"}:
+        cni_ok = None
+    else:
+        cni_ok = True
+
     return {
         "pods_pending": pods_pending,
         "pods_crashloop": pods_crashloop,
+        "pods_ok": pods_ok,
+        "api_access_ok": api_access_ok,
+        "events_ok": events_ok,
+        "nodes_ok": nodes_ok,
         "kubelet_ok": kubelet_ok,
         "containerd_ok": containerd_ok,
-    }
-
-    containerd_ok = not any(
-        bad in containerd_text.lower()
-        for bad in [
-            "inactive",
-            "failed",
-            "could not be found",
-            "not found",
-        ]
-    )
-
-    return {
-        "pods_pending": pods_pending,
-        "pods_crashloop": pods_crashloop,
-        "kubelet_ok": kubelet_ok,
-        "containerd_ok": containerd_ok,
+        "runc_ok": runc_ok,
+        "kernel_ok": kernel_ok,
+        "cni_ok": cni_ok,
     }
 
 
@@ -321,7 +366,7 @@ def collect_state() -> Dict[str, Any]:
     # Derived health
     # --------------------------
     # These are simple booleans inferred from the collected runtime data.
-    health = _health_flags(runtime)
+    health = _health_flags(runtime, versions)
 
     return {
         "runtime": runtime,
