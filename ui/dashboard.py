@@ -593,7 +593,7 @@ table_html += f"""
         <th style="width:240px">Lives</th>
         <th style="width:180px">Execution</th>
         <th style="width:180px">API</th>
-        <th>Current</th>
+        <th style="width:700px">Current Evidence</th>
     </tr>
     {rows}
 </table>
@@ -604,6 +604,7 @@ st.caption(f"Last refresh: {datetime.now().strftime('%H:%M:%S')}")
 st.warning(
     "Running in container mode: host-level checks (e.g. kubelet, systemctl) may be unavailable. "
     "Cluster API access requires kubeconfig or in-cluster credentials."
+    "KEY: 🟢 = confirmed healthy; 🔴 = confirmed unhealthy; 🟡 = unknown / visibility-limited (NEW default for Phase 1 container mode)"
 )
 
 # --------------------------
