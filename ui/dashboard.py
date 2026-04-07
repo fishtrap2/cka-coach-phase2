@@ -599,7 +599,7 @@ table_html += f"""
 </table>
 """
 
-st_html(table_html, height=1000, scrolling=True)
+st_html(table_html, height=800, scrolling=True)
 st.caption(f"Last refresh: {datetime.now().strftime('%H:%M:%S')}")
 st.warning(
     "Running in container mode: host-level checks (e.g. kubelet, systemctl) may be unavailable. "
