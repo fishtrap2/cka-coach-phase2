@@ -1,128 +1,133 @@
-# cka-coach (Phase 1 Prototype)
+# cka-coach Phase 2
 
-**Vision: Why leave the cluster to read a book or watch a video, shouldn't the cluster teach you inside it?**
-
-**Why?**
-> The idea of cka coach comes from someone who was walking thru the Linux Foundation - CKA course - LFS258
-> And two things become crystal (Painpoints from a PM perspective):
-> 
->          1) that the LFS258 course and K8S in general is very fragmented and hard to learn AND
->          2) that given the year 2026, why learn to be a CKA w/o also learning some AI fundamentals at the same time.
->
-> I came up with the Everything Lives Somewhere (ELS) Model as a way of maintaining a mental model of the system
-> instead of trying to hold a dozen layers in your head at the same time. I find it easier to learn this way and included
-> an AI model which (in context) explains (constrained to the ELS Model) exactly what is going on inside the student's own cluster.
->
-> There are hints of how I did this built inside the application, because I did it from the perspective of a Product
-> Manager (and longtime networker and executive) using modern product operating model techniques to buid this (Currently Phase1) prototype.
-> It represents easily 50-60 iterations thus far to simply build the first release of a prototype.
-> To do this I am wearing many hats:
-> 
->      *PM+Designer+Coder+Tester+Version Control+++++*
->
-> I'm also attempting to incorporate AI as I go And I also want to be a CKA so I'm working on that too.
-> I just thought it would be easier to run thru LFS258 *while* having a working ELS model and agent to help me through.
-> 
-> Learn Kubernetes *system* the way it actually works — through layers, evidence, and explanation.
-
-![ELS Model](docs/images/els-model.png)
-
-## 🚀 What is cka-coach?
-
-cka-coach is a **Gen2 AI system** for Kubernetes learning.
-
-Instead of just prompting an LLM, it:
-
-1. **Collects real cluster state**
-2. **Maps it into the ELS layered architecture**
-3. **Uses AI to explain the system clearly in context and thru the ELS model**
-
-This makes it useful for:
-- CKA exam preparation
-- platform engineering learning
-- understanding how Kubernetes actually works under the hood
-
-Every component in Kubernetes “lives somewhere” in this stack.
-
-cka-coach helps you:
-- locate components
-- understand relationships
-- debug from the correct layer
+**Private development repo for the next evolution of cka-coach**
 
 ---
 
-## 🖥️ Features
+## Vision
 
-### ELS Console (Dashboard)
-- visual layered model of the cluster
-- real-time state inspection
-- health indicators
-![ELS Model](docs/images/ELS.png)
+> Why leave the cluster to learn Kubernetes networking… when the cluster can teach you from inside?
 
-### 🔍 Expand (evidence)
-- raw data from the cluster:
-  - pods
-  - nodes
-  - events
-  - runtime
-  - networking
+cka-coach Phase 2 evolves the project into an **in-cluster learning assistant** that helps students understand:
 
-### 🤖 Explain (AI)
-- grounded in deterministic ELS mapping
-- explains through multiple lenses:
-  - Kubernetes
-  - AI / Agents
-  - Platform Engineering
-  - Product Thinking
-![ELS Model](docs/images/Explain.png)
+* where applications live (ELS model)
+* how Kubernetes networking actually works
+* how traffic flows between workloads
+* why connectivity succeeds or fails
+* how policy affects behavior
 
-### 🧠 Deterministic + AI (Gen2)
-- Python computes the system model
-- LLM explains it
-- avoids hallucinated architecture
+All **from inside the cluster itself**.
 
 ---
 
-## 🏗️ Architecture (Gen2)
+## Who this is for
 
-cka-coach is built around three layers:
+Prospective and active **LFS258 / CKA students** who:
 
-1. **State Collector**
-   - gathers structured cluster + node evidence
+* understand basic Kubernetes objects
+* struggle with *where things actually live*
+* want to build intuition for:
 
-2. **ELS Core (deterministic)**
-   - maps evidence to architecture layers
-
-3. **AI Explanation Layer**
-   - explains what is happening
-
-The dashboard shows this architecture so students can understand both:
-- Kubernetes
-- and how modern AI systems are built
-![ELS Model](docs/images/Phase1-Arch.png)
+  * pod networking
+  * CNI responsibilities
+  * service routing
+  * network policy and Zero Trust concepts
 
 ---
 
-## ⚙️ Getting Started
+## What is new in Phase 2
 
-### 1. Clone the repo on your CP node
+Phase 2 introduces a **networking and security learning layer** on top of the existing ELS model.
 
-```bash
-git clone <repo-url>
-cd cka-coach
-git checkout v0.4.1
+### Core capabilities
+
+* **CNI-aware cluster understanding**
+
+  * Detect and interpret the cluster networking layer
+  * Work across *any CNI plugin*
+
+* **Network diagram (in-cluster perspective)**
+
+  * Visualize pod → node → CNI → service → destination
+  * Show where the application actually lives in the ELS stack
+
+* **Connectivity explanation**
+
+  * Explain why traffic is allowed or denied
+  * Identify which layer is responsible
+  * Provide evidence and confidence
+
+* **CNI comparison & migration guidance**
+
+  * Help students understand differences between CNIs
+  * Explain implications of migrating (e.g. bridge → Calico)
+
+* **Progressive visibility**
+
+  * Works generically across clusters
+  * Enhances explanations when richer signals are available
+
 ---
-python -m venv venv
-source venv/bin/activate
 
-pip install -r requirements.txt
-export OPENAI_API_KEY=your_key_here
+## CNI-agnostic by design
 
-Start the Dashboard
-streamlit run ui/dashboard.py
+cka-coach Phase 2 is built to work across:
 
-Then open browser to: (Note: LFS258 has you open up the (in my case GCP VM) FW ALOT so this should work and port 8501 s/b available:
-<Your CP external IP>:8501
+* default / bridge-based networking
+* advanced CNIs such as Calico or Cilium
 
-OR you can consume cka-coach  from CLI:
-python src/main.py ask "where does kubelet run?"
+The goal is not to teach a specific plugin, but to teach:
+
+> **how Kubernetes networking works, regardless of implementation**
+
+---
+
+## Enhanced capabilities (when available)
+
+When advanced networking platforms are present, cka-coach can provide:
+
+* richer traffic reasoning
+* policy-aware explanations
+* safer “what-if” reasoning about connectivity
+
+These are **enhancements**, not requirements.
+
+---
+
+## Product philosophy
+
+cka-coach is not a dashboard.
+
+It is a **learning system** that:
+
+1. explains what it sees
+2. explains why it thinks that
+3. maps everything back to the ELS model
+4. highlights uncertainty when present
+
+---
+
+## Phase 2 focus areas
+
+* CNI detection and abstraction layer
+* Network diagram and datapath explanation
+* Connectivity reasoning (pod ↔ pod / service)
+* Introductory policy reasoning (allow/deny)
+* CNI comparison and migration guidance
+
+---
+
+## Status
+
+Phase 2 is under active development in this private repository.
+
+The public Phase 1 prototype is available here:
+https://github.com/fishtrap2/cka-coach
+
+---
+
+## Guiding idea
+
+> Kubernetes networking is the invisible layer students struggle with most.
+> cka-coach makes that layer visible, explainable, and learnable.
+
