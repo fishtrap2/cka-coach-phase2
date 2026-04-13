@@ -90,11 +90,11 @@ def normalize_collected_state(collected_state: dict) -> dict:
         missing_or_unverified.append("No recognized node-level CNI config filename was detected.")
     if cni_evidence.get("reconciliation", "unknown") == "conflict":
         missing_or_unverified.append(
-            "Cluster-level and node-level signals conflict, so the result is inferred rather than verified."
+            "Cluster-level and node-level signals conflict, so the result is a lower-certainty inference rather than a well-supported conclusion."
         )
     if cni_evidence.get("reconciliation", "unknown") == "single_source":
         missing_or_unverified.append(
-            "Only one evidence source identified a CNI, so the result remains partially unverified."
+            "Only one evidence source identified a CNI, so the result remains a medium-confidence inference rather than a fully well-supported conclusion."
         )
     missing_or_unverified.append(
         "Pod IP assignment, interface output, and routes are supporting networking context, not primary CNI identification evidence."
@@ -432,7 +432,7 @@ What is still unverified
 Final confidence/health conclusion
 
 Use precise language:
-- distinguish inferred from verified
+- prefer phrasing like high-confidence inference, well-supported conclusion, and supported by direct cluster-level evidence over wording that overstates certainty
 - do not overclaim when evidence is partial or conflicting
 - do not treat pod IP assignment alone as primary CNI identification evidence
 - when primary_layer_context contains structured CNI evidence, treat it as the authoritative basis for the explanation ahead of the generic compact context
