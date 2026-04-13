@@ -125,6 +125,8 @@ def summarize(state: dict) -> dict:
     runtime = state.get("runtime", {})
     health = state.get("health", {})
     versions = state.get("versions", {})
+    summary_state = state.get("summary", {})
+    summary_versions = summary_state.get("versions", {})
 
     pods_text = runtime.get("pods", "")
     pod_lines = [l for l in pods_text.splitlines() if l.strip()]
@@ -139,7 +141,7 @@ def summarize(state: dict) -> dict:
     kubelet_ok = health.get("kubelet_ok", None)
     containerd_ok = health.get("containerd_ok", None)
 
-    cni_name = versions.get("cni", "")
+    cni_name = summary_versions.get("cni", versions.get("cni", ""))
     kernel_ver = versions.get("kernel", "")
     kubelet_ver = versions.get("kubelet", "")
     runc_ver = versions.get("runc", "")
@@ -186,6 +188,7 @@ def map_versions_to_layers(state: dict) -> dict:
     Map version strings to visible ELS table rows.
     """
     v = state.get("versions", {})
+    summary_versions = state.get("summary", {}).get("versions", {})
     return {
         "L9": "",
         "L8": "",
@@ -195,12 +198,39 @@ def map_versions_to_layers(state: dict) -> dict:
         "L5": v.get("api", ""),
         "L4.1": v.get("kubelet", ""),
         "L4.2": v.get("api", ""),
-        "L4.3": v.get("cni", ""),
+        "L4.3": summary_versions.get("cni", v.get("cni", "")),
         "L3": v.get("containerd", ""),
         "L2": v.get("runc", ""),
         "L1": v.get("kernel", ""),
         "L0": "",
     }
+
+
+def format_cni_detection_evidence(state: dict) -> str:
+    """
+    Render auditable CNI detection evidence for the L4.3 expand view.
+    """
+    runtime = state.get("runtime", {})
+    versions = state.get("versions", {})
+    summary_versions = state.get("summary", {}).get("versions", {})
+    detection = state.get("evidence", {}).get("cni", {})
+
+    filenames = detection.get("filenames", [])
+    filename_text = "\n".join(filenames) if filenames else "(none found)"
+    selected_file = detection.get("selected_file", "") or "(none)"
+    confidence = detection.get("confidence", "low")
+    cni_name = summary_versions.get("cni", versions.get("cni", "")) or "unknown"
+
+    return (
+        "[cni detection]\n"
+        f"detected cni: {cni_name}\n"
+        f"confidence: {confidence}\n"
+        f"selected file: {selected_file}\n"
+        "files in /etc/cni/net.d:\n"
+        f"{filename_text}\n\n"
+        "[node network evidence]\n"
+        f"{runtime.get('network', '')}\n\n{runtime.get('routes', '')}"
+    ).strip()
 
 
 def get_expand_text(key: str, state: dict) -> str:
@@ -221,7 +251,7 @@ def get_expand_text(key: str, state: dict) -> str:
         "L5": runtime.get("processes", ""),
         "L4.1": runtime.get("kubelet", ""),
         "L4.2": runtime.get("nodes", ""),
-        "L4.3": runtime.get("network", "") + "\n\n" + runtime.get("routes", ""),
+        "L4.3": format_cni_detection_evidence(state),
         "L3": runtime.get("containerd", "") + "\n\n" + runtime.get("containers", ""),
         "L2": versions.get("runc", ""),
         "L1": runtime.get("network", "") + "\n\n" + versions.get("kernel", ""),
@@ -507,9 +537,8 @@ def layer_status(key: str, health: dict):
     Map ELS UI rows to their derived health status.
 
     Returns:
-    - True  => confirmed healthy
-    - False => confirmed unhealthy
-    - None  => unknown / visibility-limited
+    - True / False / None for legacy layers
+    - "healthy" / "degraded" / "unknown" for CNI
     """
     if key == "L8":
         return health.get("pods_ok")
@@ -558,12 +587,12 @@ for lvl, name, description, lives, exec_type, api, key in layers:
     row_color = "#332200"
     health_icon = "🟡"
 
-    if status is True:
-      row_color = "#001100"
-      health_icon = "🟢"
-    elif status is False:
-      row_color = "#220000"
-      health_icon = "🔴"
+    if status is True or status == "healthy":
+        row_color = "#001100"
+        health_icon = "🟢"
+    elif status is False or status == "degraded":
+        row_color = "#220000"
+        health_icon = "🔴"
 
     # --- everything else stays AMBER ---
 
@@ -606,7 +635,7 @@ st.warning(
     "Cluster API access requires kubeconfig or in-cluster credentials."
 )
 st.warning(
-    "KEY: 🟢 = confirmed healthy; 🔴 = confirmed unhealthy; 🟡 = unknown / visibility-limited (NEW default for Phase 1 container mode)"
+    "KEY: 🟢 = healthy; 🔴 = degraded/unhealthy; 🟡 = unknown / visibility-limited (NEW default for Phase 1 container mode)"
 )
 
 # --------------------------

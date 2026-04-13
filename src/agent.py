@@ -70,6 +70,20 @@ def normalize_collected_state(collected_state: dict) -> dict:
     """
     runtime = collected_state.get("runtime", {})
     versions = collected_state.get("versions", {})
+    summary_versions = collected_state.get("summary", {}).get("versions", {})
+    cni_evidence = collected_state.get("evidence", {}).get("cni", {})
+
+    cni_filenames = cni_evidence.get("filenames", [])
+    cni_filename_text = "\n".join(cni_filenames) if cni_filenames else "(none found)"
+    cni_name = summary_versions.get("cni", versions.get("cni", "")) or "unknown"
+    cni_detection_text = (
+        "[cni detection]\n"
+        f"detected cni: {cni_name}\n"
+        f"confidence: {cni_evidence.get('confidence', 'low')}\n"
+        f"selected file: {cni_evidence.get('selected_file', '') or '(none)'}\n"
+        "files in /etc/cni/net.d:\n"
+        f"{cni_filename_text}"
+    )
 
     return {
         "pods": runtime.get("pods", ""),
@@ -81,6 +95,7 @@ def normalize_collected_state(collected_state: dict) -> dict:
         "processes": runtime.get("processes", ""),
         "network": runtime.get("network", ""),
         "routes": runtime.get("routes", ""),
+        "cni_detection": cni_detection_text,
         "api": versions.get("api", ""),
         "k8s_json": versions.get("k8s_json", ""),
     }

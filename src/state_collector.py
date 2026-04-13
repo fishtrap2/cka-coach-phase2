@@ -2,7 +2,7 @@ import json
 import platform
 import shutil
 import subprocess
-from typing import Dict, Any
+from typing import Dict, Any, List
 
 
 def _run_command(command: str) -> str:
@@ -148,34 +148,85 @@ def _safe_kubectl_version_short() -> str:
     return _safe_kubectl("kubectl version")
 
 
-def _detect_cni_name() -> str:
+def _parse_cni_listing(listing: str) -> List[str]:
+    """
+    Normalize a raw /etc/cni/net.d listing into a filename list.
+    """
+    return [line.strip() for line in listing.splitlines() if line.strip()]
+
+
+def _select_cni_match(filenames: List[str]) -> Dict[str, str]:
+    """
+    Choose the best available CNI signal from discovered config filenames.
+    """
+    recognized_patterns = [
+        ("cilium", "cilium"),
+        ("calico", "calico"),
+        ("flannel", "flannel"),
+        ("weave", "weave"),
+    ]
+
+    for filename in filenames:
+        lower = filename.lower()
+        for pattern, cni_name in recognized_patterns:
+            if pattern in lower:
+                return {
+                    "cni": cni_name,
+                    "selected_file": filename,
+                    "confidence": "high",
+                }
+
+    for filename in filenames:
+        lower = filename.lower()
+        if lower.endswith(".conf") or lower.endswith(".conflist") or "10-" in lower:
+            return {
+                "cni": filename,
+                "selected_file": filename,
+                "confidence": "medium",
+            }
+
+    selected_file = filenames[0] if filenames else ""
+    return {
+        "cni": "unknown",
+        "selected_file": selected_file,
+        "confidence": "low",
+    }
+
+
+def _detect_cni() -> Dict[str, Any]:
     """
     Best-effort detection of CNI config from /etc/cni/net.d.
 
     This is a lightweight heuristic, not a full parser.
     """
     if not _command_exists("ls"):
-        return "unknown"
+        return {
+            "cni": "unknown",
+            "filenames": [],
+            "selected_file": "",
+            "confidence": "low",
+        }
 
     listing = _run_command("ls /etc/cni/net.d/ 2>/dev/null")
-    if not listing:
-        return "unknown"
+    filenames = _parse_cni_listing(listing)
+    if not filenames:
+        return {
+            "cni": "unknown",
+            "filenames": [],
+            "selected_file": "",
+            "confidence": "low",
+        }
 
-    lower = listing.lower()
+    result = _select_cni_match(filenames)
+    result["filenames"] = filenames
+    return result
 
-    # Common CNIs / patterns
-    if "cilium" in lower:
-        return "cilium"
-    if "calico" in lower:
-        return "calico"
-    if "flannel" in lower:
-        return "flannel"
-    if "weave" in lower:
-        return "weave"
-    if "10-" in lower or ".conf" in lower or ".conflist" in lower:
-        return listing.splitlines()[0]
 
-    return "unknown"
+def _detect_cni_name() -> str:
+    """
+    Backward-compatible string-only CNI detector.
+    """
+    return _detect_cni().get("cni", "unknown")
 
 
 def _health_flags(runtime: Dict[str, str], versions: Dict[str, str]) -> Dict[str, Any]:
@@ -274,9 +325,11 @@ def _health_flags(runtime: Dict[str, str], versions: Dict[str, str]) -> Dict[str
 
     # cni
     if cni_text in {"", "unknown"}:
-        cni_ok = None
+        cni_ok = "unknown"
+    elif "." in cni_text:
+        cni_ok = "degraded"
     else:
-        cni_ok = True
+        cni_ok = "healthy"
 
     return {
         "pods_pending": pods_pending,
@@ -300,6 +353,8 @@ def collect_state() -> Dict[str, Any]:
     Returned shape:
     {
       "runtime": {...},
+      "summary": {...},
+      "evidence": {...},
       "versions": {...},
       "health": {...}
     }
@@ -351,6 +406,8 @@ def collect_state() -> Dict[str, Any]:
     # --------------------------
     # These fields are slower-changing metadata that help place the cluster
     # in context and populate table version columns.
+    cni_detection = _detect_cni()
+
     versions = {
         "api": _safe_kubectl_version_short(),
         "k8s_json": _safe_kubectl_version_json(),
@@ -358,8 +415,18 @@ def collect_state() -> Dict[str, Any]:
         "containerd": _safe_containerd_version(),
         "kubelet": _safe_kubelet_version(),
         "runc": _safe_runc_version(),
-        "cni": _detect_cni_name(),
+        "cni": cni_detection.get("cni", "unknown"),
         "python_platform": platform.platform(),
+    }
+
+    summary = {
+        "versions": {
+            "cni": versions.get("cni", "unknown"),
+        }
+    }
+
+    evidence = {
+        "cni": cni_detection,
     }
 
     # --------------------------
@@ -370,6 +437,8 @@ def collect_state() -> Dict[str, Any]:
 
     return {
         "runtime": runtime,
+        "summary": summary,
+        "evidence": evidence,
         "versions": versions,
         "health": health,
     }

@@ -77,6 +77,7 @@ def map_to_els(state: dict):
     processes = _clean(state.get("processes", ""))
     network = _clean(state.get("network", ""))
     routes = _clean(state.get("routes", ""))
+    cni_detection = _clean(state.get("cni_detection", ""))
     api = _clean(state.get("api", ""))
     k8s_json = _clean(state.get("k8s_json", ""))
 
@@ -159,7 +160,7 @@ def map_to_els(state: dict):
                 sub_lines.append("[node networking view]\n" + nodes)
 
             # Combine network + routes into one CNI-oriented view.
-            cni_text = _join_parts([network, routes])
+            cni_text = _join_parts([cni_detection, network, routes])
             if _meaningful(cni_text) and cni_text != "No strong evidence collected for this layer yet.":
                 sub_lines.append("[cni]\n" + cni_text)
 
