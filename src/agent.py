@@ -71,6 +71,7 @@ def normalize_collected_state(collected_state: dict) -> dict:
     runtime = collected_state.get("runtime", {})
     versions = collected_state.get("versions", {})
     summary_versions = collected_state.get("summary", {}).get("versions", {})
+    health = collected_state.get("health", {})
     cni_evidence = collected_state.get("evidence", {}).get("cni", {})
     node_level = cni_evidence.get("node_level", {})
     cluster_level = cni_evidence.get("cluster_level", {})
@@ -80,23 +81,49 @@ def normalize_collected_state(collected_state: dict) -> dict:
     matched_pods = cluster_level.get("matched_pods", [])
     matched_pod_text = "\n".join(matched_pods) if matched_pods else "(none found)"
     cni_name = summary_versions.get("cni", versions.get("cni", "")) or "unknown"
+    cni_health = health.get("cni_ok", "unknown")
+
+    missing_or_unverified = []
+    if cluster_level.get("cni", "unknown") == "unknown":
+        missing_or_unverified.append("No recognized kube-system CNI pod names were detected.")
+    if node_level.get("cni", "unknown") == "unknown":
+        missing_or_unverified.append("No recognized node-level CNI config filename was detected.")
+    if cni_evidence.get("reconciliation", "unknown") == "conflict":
+        missing_or_unverified.append(
+            "Cluster-level and node-level signals conflict, so the result is inferred rather than verified."
+        )
+    if cni_evidence.get("reconciliation", "unknown") == "single_source":
+        missing_or_unverified.append(
+            "Only one evidence source identified a CNI, so the result remains partially unverified."
+        )
+    missing_or_unverified.append(
+        "Pod IP assignment, interface output, and routes are supporting networking context, not primary CNI identification evidence."
+    )
+    missing_text = "\n".join(f"- {item}" for item in missing_or_unverified)
+
     cni_detection_text = (
-        "[cni detection]\n"
-        f"detected cni: {cni_name}\n"
+        "[detected or inferred cni]\n"
+        f"detected/inferred cni: {cni_name}\n"
+        f"reconciliation: {cni_evidence.get('reconciliation', 'unknown')}\n"
         f"confidence: {cni_evidence.get('confidence', 'low')}\n"
-        f"reconciliation: {cni_evidence.get('reconciliation', 'unknown')}\n\n"
-        "[node-level detection]\n"
+        f"health/status meaning: {cni_health}\n\n"
+        "[cluster-level evidence]\n"
+        f"detected cni: {cluster_level.get('cni', 'unknown')}\n"
+        f"confidence: {cluster_level.get('confidence', 'low')}\n"
+        f"selected pod: {cluster_level.get('selected_pod', '') or '(none)'}\n"
+        "matched kube-system pods:\n"
+        f"{matched_pod_text}\n\n"
+        "[node-level evidence]\n"
         f"detected cni: {node_level.get('cni', 'unknown')}\n"
         f"confidence: {node_level.get('confidence', 'low')}\n"
         f"selected file: {node_level.get('selected_file', '') or '(none)'}\n"
         "files in /etc/cni/net.d:\n"
         f"{cni_filename_text}\n\n"
-        "[cluster-level detection]\n"
-        f"detected cni: {cluster_level.get('cni', 'unknown')}\n"
-        f"confidence: {cluster_level.get('confidence', 'low')}\n"
-        f"selected pod: {cluster_level.get('selected_pod', '') or '(none)'}\n"
-        "matched kube-system pods:\n"
-        f"{matched_pod_text}"
+        "[missing or unverified evidence]\n"
+        f"{missing_text}\n\n"
+        "[confidence and health/status meaning]\n"
+        f"confidence: {cni_evidence.get('confidence', 'low')}\n"
+        f"health/status meaning: {cni_health}"
     )
 
     return {
@@ -361,6 +388,10 @@ def ask_llm(question: str, collected_state: dict, concise: bool = False, allow_w
         payload = {
             "question": question,
             "context": build_llm_context(collected_state),
+            "primary_layer_context": els_result.get("mapped_context", {}).get(
+                els_result.get("layer", ""),
+                "",
+            )[:2000],
             "els_result": els_prompt_result,
             "concise": concise,
             "allow_web": allow_web,
@@ -389,6 +420,23 @@ Keep next_steps to at most 3 items.
 Keep warnings minimal and important.
 """
 
+        cni_answer_policy = ""
+        if "cni" in question.lower() or "container network interface" in question.lower():
+            cni_answer_policy = """
+For CNI explanations, structure the "answer" field with these exact section labels:
+Current interpretation
+What we know
+What supports it at cluster level
+What supports it at node level
+What is still unverified
+Final confidence/health conclusion
+
+Use precise language:
+- distinguish inferred from verified
+- do not overclaim when evidence is partial or conflicting
+- do not treat pod IP assignment alone as primary CNI identification evidence
+"""
+
         system_prompt = f"""
 You are cka-coach, a Kubernetes + AI systems tutor.
 
@@ -406,6 +454,7 @@ Knowledge policy:
 
 Style policy:
 {concise_policy}
+{cni_answer_policy}
 """
 
         user_prompt = f"""
