@@ -1,0 +1,22 @@
+{
+  "cni": "multi_source_reconciled",
+  "confidence": "high_medium_low_with_separate_health_status",
+  "features": [
+    "cni_detection",
+    "cni_evidence_reconciliation",
+    "l43_structured_explain",
+    "policy_awareness",
+    "capabilities_summary",
+    "migration_reconciliation_note"
+  ],
+  "ui": [
+    "dashboard_panel",
+    "l43_evidence_expand",
+    "l43_capabilities_policy_summary"
+  ],
+  "missing": [
+    "diagram",
+    "connectivity_reasoning",
+    "migration_guidance"
+  ]
+}

@@ -74,6 +74,18 @@ class TestCniDetection(unittest.TestCase):
             ["cilium-abcde", "cilium-operator-12345"],
         )
 
+    def test_network_policy_summary_detects_present_policies(self):
+        policies_text = (
+            "NAMESPACE NAME POD-SELECTOR AGE\n"
+            "default allow-web app=web 1d\n"
+            "payments deny-all <none> 4h\n"
+        )
+        result = state_collector._summarize_network_policy_presence(policies_text)
+
+        self.assertEqual(result["status"], "present")
+        self.assertEqual(result["count"], 2)
+        self.assertEqual(result["namespaces"], ["default", "payments"])
+
     def test_collect_state_reconciles_agreeing_sources_as_healthy(self):
         node_detection = {
             "cni": "calico",
@@ -117,6 +129,12 @@ class TestCniDetection(unittest.TestCase):
         self.assertEqual(state["evidence"]["cni"]["cluster_level"], cluster_detection)
         self.assertEqual(state["evidence"]["cni"]["confidence"], "high")
         self.assertEqual(state["evidence"]["cni"]["reconciliation"], "agree")
+        self.assertEqual(state["evidence"]["cni"]["capabilities"]["summary"], "policy-aware dataplane")
+        self.assertEqual(state["evidence"]["cni"]["policy_presence"]["status"], "unknown")
+        self.assertEqual(
+            state["evidence"]["cni"]["migration_note"],
+            "Cluster-level and node-level evidence agree on the current CNI.",
+        )
         self.assertEqual(state["versions"]["cni"], "calico")
         self.assertEqual(state["health"]["cni_ok"], "healthy")
 
@@ -162,6 +180,59 @@ class TestCniDetection(unittest.TestCase):
         self.assertEqual(state["evidence"]["cni"]["confidence"], "medium")
         self.assertEqual(state["evidence"]["cni"]["reconciliation"], "conflict")
         self.assertEqual(state["health"]["cni_ok"], "degraded")
+
+    def test_collect_state_includes_policy_presence_when_network_policy_exists(self):
+        node_detection = {
+            "cni": "calico",
+            "filenames": ["10-calico.conflist"],
+            "selected_file": "10-calico.conflist",
+            "confidence": "high",
+        }
+        cluster_detection = {
+            "cni": "calico",
+            "matched_pods": ["calico-node-abcde"],
+            "selected_pod": "calico-node-abcde",
+            "confidence": "high",
+        }
+
+        def fake_safe_kubectl(command: str) -> str:
+            if command == "kubectl get networkpolicy -A":
+                return (
+                    "NAMESPACE NAME POD-SELECTOR AGE\n"
+                    "default allow-web app=web 1d\n"
+                )
+            return ""
+
+        with patch.object(state_collector, "_safe_kubectl", side_effect=fake_safe_kubectl), patch.object(
+            state_collector, "_safe_systemctl", return_value=""
+        ), patch.object(state_collector, "_safe_crictl", return_value=""), patch.object(
+            state_collector, "_safe_ip", return_value=""
+        ), patch.object(
+            state_collector, "_run_command", return_value=""
+        ), patch.object(
+            state_collector, "_safe_kubectl_version_short", return_value=""
+        ), patch.object(
+            state_collector, "_safe_kubectl_version_json", return_value=""
+        ), patch.object(
+            state_collector, "_safe_uname", return_value=""
+        ), patch.object(
+            state_collector, "_safe_containerd_version", return_value=""
+        ), patch.object(
+            state_collector, "_safe_kubelet_version", return_value=""
+        ), patch.object(
+            state_collector, "_safe_runc_version", return_value=""
+        ), patch.object(
+            state_collector, "_detect_cni", return_value=node_detection
+        ), patch.object(
+            state_collector, "_detect_cni_from_pods", return_value=cluster_detection
+        ):
+            state = state_collector.collect_state()
+
+        self.assertEqual(state["runtime"]["network_policies"].splitlines()[1], "default allow-web app=web 1d")
+        self.assertEqual(state["evidence"]["cni"]["policy_presence"]["status"], "present")
+        self.assertEqual(state["evidence"]["cni"]["policy_presence"]["count"], 1)
+        self.assertEqual(state["evidence"]["cni"]["policy_presence"]["namespaces"], ["default"])
+        self.assertEqual(state["evidence"]["cni"]["capabilities"]["policy_support"], "likely supported by platform")
 
 
 if __name__ == "__main__":

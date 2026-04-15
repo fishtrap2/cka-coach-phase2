@@ -349,6 +349,103 @@ def _reconcile_cni_detection(
     }
 
 
+def _infer_cni_capabilities(cni_name: str) -> Dict[str, str]:
+    """
+    Infer a small, cautious capability summary from the detected CNI name.
+    """
+    capability_map = {
+        "cilium": {
+            "summary": "policy-aware dataplane",
+            "policy_support": "likely supported by platform",
+            "observability": "enhanced platform telemetry likely available",
+        },
+        "calico": {
+            "summary": "policy-aware dataplane",
+            "policy_support": "likely supported by platform",
+            "observability": "platform telemetry likely available",
+        },
+        "canal": {
+            "summary": "policy-aware combined deployment",
+            "policy_support": "likely supported by platform",
+            "observability": "platform-dependent telemetry may be available",
+        },
+        "flannel": {
+            "summary": "basic pod networking dataplane",
+            "policy_support": "not indicated by current detection alone",
+            "observability": "basic networking visibility inferred",
+        },
+        "weave": {
+            "summary": "overlay networking dataplane",
+            "policy_support": "possible but not verified from current detection alone",
+            "observability": "basic platform visibility inferred",
+        },
+    }
+
+    inferred = capability_map.get(cni_name, None)
+    if inferred:
+        return {
+            **inferred,
+            "inference_basis": "detected_cni_name",
+        }
+
+    return {
+        "summary": "unknown",
+        "policy_support": "unknown",
+        "observability": "unknown",
+        "inference_basis": "insufficient_cni_evidence",
+    }
+
+
+def _summarize_network_policy_presence(policies_text: str) -> Dict[str, Any]:
+    """
+    Summarize whether NetworkPolicy objects are present in the cluster.
+    """
+    lower = policies_text.lower()
+    if not policies_text.strip() or "kubectl not installed" in lower:
+        return {
+            "status": "unknown",
+            "count": 0,
+            "namespaces": [],
+        }
+
+    if "no resources found" in lower:
+        return {
+            "status": "absent",
+            "count": 0,
+            "namespaces": [],
+        }
+
+    lines = [line for line in policies_text.splitlines() if line.strip()]
+    data_lines = lines[1:] if len(lines) > 1 else []
+    namespaces = sorted({line.split()[0] for line in data_lines if line.split()})
+
+    return {
+        "status": "present" if data_lines else "absent",
+        "count": len(data_lines),
+        "namespaces": namespaces,
+    }
+
+
+def _build_cni_migration_note(
+    reconciliation: str,
+    node_level: Dict[str, Any],
+    cluster_level: Dict[str, Any],
+) -> str:
+    """
+    Build a short evidence-based note about reconciliation or possible migration.
+    """
+    if reconciliation == "agree":
+        return "Cluster-level and node-level evidence agree on the current CNI."
+    if reconciliation == "single_source":
+        return "Only one evidence source identifies the current CNI, so the result remains partially unverified."
+    if reconciliation == "conflict":
+        return (
+            f"Mixed CNI evidence detected: cluster-level suggests {cluster_level.get('cni', 'unknown')} "
+            f"while node-level suggests {node_level.get('cni', 'unknown')}. A migration or partial rollout may be in progress."
+        )
+    return "Not enough evidence is available to identify the current CNI confidently."
+
+
 def _detect_cni_name() -> str:
     """
     Backward-compatible string-only CNI detector.
@@ -538,6 +635,9 @@ def collect_state() -> Dict[str, Any]:
 
         # routing table
         "routes": _safe_ip("ip route"),
+
+        # cluster policy objects
+        "network_policies": _safe_kubectl("kubectl get networkpolicy -A"),
     }
 
     # --------------------------
@@ -548,6 +648,13 @@ def collect_state() -> Dict[str, Any]:
     node_cni_detection = _detect_cni()
     cluster_cni_detection = _detect_cni_from_pods(runtime.get("pods", ""))
     combined_cni_detection = _reconcile_cni_detection(
+        node_cni_detection,
+        cluster_cni_detection,
+    )
+    policy_presence = _summarize_network_policy_presence(runtime.get("network_policies", ""))
+    capabilities = _infer_cni_capabilities(combined_cni_detection.get("cni", "unknown"))
+    migration_note = _build_cni_migration_note(
+        combined_cni_detection.get("reconciliation", "unknown"),
         node_cni_detection,
         cluster_cni_detection,
     )
@@ -574,6 +681,9 @@ def collect_state() -> Dict[str, Any]:
             "cni": combined_cni_detection.get("cni", "unknown"),
             "confidence": combined_cni_detection.get("confidence", "low"),
             "reconciliation": combined_cni_detection.get("reconciliation", "unknown"),
+            "capabilities": capabilities,
+            "policy_presence": policy_presence,
+            "migration_note": migration_note,
             "node_level": node_cni_detection,
             "cluster_level": cluster_cni_detection,
         },

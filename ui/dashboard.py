@@ -146,6 +146,9 @@ def summarize(state: dict) -> dict:
     kubelet_ver = versions.get("kubelet", "")
     runc_ver = versions.get("runc", "")
     api_ver = versions.get("api", "")
+    cni_evidence = state.get("evidence", {}).get("cni", {})
+    capability_summary = cni_evidence.get("capabilities", {}).get("summary", "unknown")
+    policy_status = cni_evidence.get("policy_presence", {}).get("status", "unknown")
 
     if kubelet_ok is True:
         kubelet_text = "kubelet running"
@@ -175,7 +178,10 @@ def summarize(state: dict) -> dict:
         "L5": ("kube-controller-manager", True),
         "L4.1": (kubelet_text, kubelet_ok is True),
         "L4.2": ("kube-proxy / service routing", True),
-        "L4.3": (f"CNI config: {cni_name or 'unknown'}", True),
+        "L4.3": (
+            f"CNI: {cni_name or 'unknown'} | capability: {capability_summary} | policy: {policy_status}",
+            True,
+        ),
         "L3": (containerd_text, containerd_ok is True),
         "L2": (runc_ver or "runc version unknown", True),
         "L1": (f"kernel {kernel_ver or 'unknown'}", True),
@@ -217,6 +223,9 @@ def format_cni_detection_evidence(state: dict) -> str:
 
     node_level = detection.get("node_level", {})
     cluster_level = detection.get("cluster_level", {})
+    capabilities = detection.get("capabilities", {})
+    policy_presence = detection.get("policy_presence", {})
+    migration_note = detection.get("migration_note", "unknown")
 
     filenames = node_level.get("filenames", [])
     filename_text = "\n".join(filenames) if filenames else "(none found)"
@@ -245,6 +254,17 @@ def format_cni_detection_evidence(state: dict) -> str:
         f"selected pod: {selected_pod}\n"
         "matched kube-system pods:\n"
         f"{matched_pod_text}\n\n"
+        "[capability inference]\n"
+        f"summary: {capabilities.get('summary', 'unknown')}\n"
+        f"policy support: {capabilities.get('policy_support', 'unknown')}\n"
+        f"observability: {capabilities.get('observability', 'unknown')}\n"
+        f"inference basis: {capabilities.get('inference_basis', 'unknown')}\n\n"
+        "[policy presence summary]\n"
+        f"status: {policy_presence.get('status', 'unknown')}\n"
+        f"count: {policy_presence.get('count', 0)}\n"
+        f"namespaces: {', '.join(policy_presence.get('namespaces', [])) or '(none)'}\n\n"
+        "[migration or reconciliation note]\n"
+        f"{migration_note}\n\n"
         "[node network evidence]\n"
         f"{runtime.get('network', '')}\n\n{runtime.get('routes', '')}"
     ).strip()

@@ -82,6 +82,9 @@ def normalize_collected_state(collected_state: dict) -> dict:
     matched_pod_text = "\n".join(matched_pods) if matched_pods else "(none found)"
     cni_name = summary_versions.get("cni", versions.get("cni", "")) or "unknown"
     cni_health = health.get("cni_ok", "unknown")
+    capabilities = cni_evidence.get("capabilities", {})
+    policy_presence = cni_evidence.get("policy_presence", {})
+    migration_note = cni_evidence.get("migration_note", "unknown")
 
     missing_or_unverified = []
     if cluster_level.get("cni", "unknown") == "unknown":
@@ -119,6 +122,17 @@ def normalize_collected_state(collected_state: dict) -> dict:
         f"selected file: {node_level.get('selected_file', '') or '(none)'}\n"
         "files in /etc/cni/net.d:\n"
         f"{cni_filename_text}\n\n"
+        "[capability inference]\n"
+        f"summary: {capabilities.get('summary', 'unknown')}\n"
+        f"policy support: {capabilities.get('policy_support', 'unknown')}\n"
+        f"observability: {capabilities.get('observability', 'unknown')}\n"
+        f"inference basis: {capabilities.get('inference_basis', 'unknown')}\n\n"
+        "[policy presence summary]\n"
+        f"status: {policy_presence.get('status', 'unknown')}\n"
+        f"count: {policy_presence.get('count', 0)}\n"
+        f"namespaces: {', '.join(policy_presence.get('namespaces', [])) or '(none)'}\n\n"
+        "[migration or reconciliation note]\n"
+        f"{migration_note}\n\n"
         "[missing or unverified evidence]\n"
         f"{missing_text}\n\n"
         "[confidence and health/status meaning]\n"
@@ -130,6 +144,7 @@ def normalize_collected_state(collected_state: dict) -> dict:
         "pods": runtime.get("pods", ""),
         "events": runtime.get("events", ""),
         "nodes": runtime.get("nodes", ""),
+        "network_policies": runtime.get("network_policies", ""),
         "kubelet": runtime.get("kubelet", ""),
         "containerd": runtime.get("containerd", ""),
         "containers": runtime.get("containers", ""),
