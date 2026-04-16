@@ -473,6 +473,10 @@ Use precise language:
 - do not treat pod IP assignment alone as primary CNI identification evidence
 - do not imply observed policy enforcement when only platform capability or NetworkPolicy object presence is shown
 - when primary_layer_context contains structured CNI evidence, treat it as the authoritative basis for the explanation ahead of the generic compact context
+- use the combined confidence from primary_layer_context exactly as written for the overall conclusion
+- if combined confidence is medium, do not describe the overall interpretation as high-confidence
+- if cluster-level evidence is strong but combined confidence is only medium, describe that as direct cluster-level support with a medium-confidence overall conclusion
+- keep health/status meaning aligned with primary_layer_context; if it says unknown, describe visibility as limited rather than healthy or degraded
 - do not warn that generic pod listings are truncated if primary_layer_context already contains sufficient cluster-level CNI evidence
 - only warn about incomplete, weak, or conflicting evidence when the primary_layer_context itself shows that limitation
 """

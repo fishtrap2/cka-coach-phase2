@@ -207,6 +207,7 @@ def map_versions_to_layers(state: dict) -> dict:
     summary_versions = state.get("summary", {}).get("versions", {})
     cni_name = summary_versions.get("cni", v.get("cni", ""))
     cni_version = summary_versions.get("cni_version", "unknown")
+    cni_config_spec_version = summary_versions.get("cni_config_spec_version", "unknown")
     return {
         "L9": "",
         "L8": "",
@@ -219,7 +220,11 @@ def map_versions_to_layers(state: dict) -> dict:
         "L4.3": (
             f"{cni_name} | v{cni_version}"
             if cni_name and cni_name != "unknown" and cni_version not in {"", "unknown"}
-            else cni_name
+            else (
+                f"{cni_name} | cniSpec {cni_config_spec_version}"
+                if cni_name and cni_name != "unknown" and cni_config_spec_version not in {"", "unknown"}
+                else cni_name
+            )
         ),
         "L3": v.get("containerd", ""),
         "L2": v.get("runc", ""),
@@ -750,8 +755,20 @@ selected_key = selected_layer["key"]
 selected_summary, _ = summary.get(selected_key, ("...", True))
 selected_version = versions_map.get(selected_key, "")
 selected_status = layer_status(selected_key, health)
-cni_confidence = state.get("evidence", {}).get("cni", {}).get("confidence", "unknown")
+cni_evidence = state.get("evidence", {}).get("cni", {})
+cni_confidence = cni_evidence.get("confidence", "unknown")
 cni_config_spec = state.get("summary", {}).get("versions", {}).get("cni_config_spec_version", "unknown")
+cni_capability = cni_evidence.get("capabilities", {}).get("summary", "unknown")
+cni_policy_status = cni_evidence.get("policy_presence", {}).get("status", "unknown")
+cni_policy_label = {
+    "present": "present",
+    "absent": "none detected",
+    "unknown": "unknown",
+}.get(cni_policy_status, cni_policy_status)
+cni_name = state.get("summary", {}).get("versions", {}).get(
+    "cni",
+    state.get("versions", {}).get("cni", "unknown"),
+)
 
 status_label = "Unknown / limited visibility"
 if selected_status is True or selected_status == "healthy":
@@ -761,23 +778,53 @@ elif selected_status is False or selected_status == "degraded":
 
 with st.container(border=True):
     st.markdown(f"### {layer_label(selected_layer)}")
-    meta_col1, meta_col2 = st.columns([2, 1])
-    with meta_col1:
-        st.write(selected_layer["description"])
-    with meta_col2:
-        st.markdown("**Where it lives**")
-        st.write(selected_layer["lives"])
-        st.markdown("**Execution**")
-        st.write(selected_layer["exec_type"])
+    if selected_key == "L4.3":
+        st.caption(selected_layer["description"])
+        summary_col1, summary_col2, summary_col3, summary_col4 = st.columns([1.6, 1.1, 1.1, 1.2])
 
-    st.markdown("**Interpreted Summary**")
-    st.write(selected_summary)
-    if selected_version:
-        st.write(f"Version / identity: {selected_version}")
-    if selected_key == "L4.3" and cni_config_spec not in {"", "unknown"}:
-        st.write(f"CNI config spec: {cni_config_spec}")
-    st.write(f"Health / status: {status_label}")
-    st.caption(f"Suggested debug entry point: `{selected_layer['api']}`")
+        with summary_col1:
+            st.markdown("**Interpreted Summary**")
+            st.write(f"CNI: {cni_name}")
+            st.write(f"Capability: {cni_capability}")
+            st.write(f"Policy: {cni_policy_label}")
+
+        with summary_col2:
+            st.markdown("**Identity / Version**")
+            st.write(selected_version or "unknown")
+            st.write(
+                f"CNI config spec: {cni_config_spec}"
+                if cni_config_spec not in {"", "unknown"}
+                else "CNI config spec: not directly observed"
+            )
+
+        with summary_col3:
+            st.markdown("**Confidence / Status**")
+            st.write(f"Confidence: {cni_confidence}")
+            st.write(f"Health: {status_label}")
+
+        with summary_col4:
+            st.markdown("**Placement**")
+            st.write(selected_layer["lives"])
+            st.write(f"Execution: {selected_layer['exec_type']}")
+
+        st.caption(f"Suggested debug entry point: `{selected_layer['api']}`")
+    else:
+        meta_col1, meta_col2 = st.columns([2, 1])
+        with meta_col1:
+            st.write(selected_layer["description"])
+        with meta_col2:
+            st.markdown("**Where it lives**")
+            st.write(selected_layer["lives"])
+            st.markdown("**Execution**")
+            st.write(selected_layer["exec_type"])
+
+        st.markdown("**Interpreted Summary**")
+        st.write(selected_summary)
+        if selected_version:
+            st.write(f"Version / identity: {selected_version}")
+        st.write(f"Health / status: {status_label}")
+        st.caption(f"Suggested debug entry point: `{selected_layer['api']}`")
+
     if selected_key == "L4.3":
         st.caption(
             "Confidence key: high = agreeing direct evidence across sources; medium = one source or mixed support; low = insufficient direct evidence."
