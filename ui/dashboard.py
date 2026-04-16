@@ -742,6 +742,7 @@ selected_key = selected_layer["key"]
 selected_summary, _ = summary.get(selected_key, ("...", True))
 selected_version = versions_map.get(selected_key, "")
 selected_status = layer_status(selected_key, health)
+cni_confidence = state.get("evidence", {}).get("cni", {}).get("confidence", "unknown")
 
 status_label = "Unknown / limited visibility"
 if selected_status is True or selected_status == "healthy":
@@ -749,31 +750,30 @@ if selected_status is True or selected_status == "healthy":
 elif selected_status is False or selected_status == "degraded":
     status_label = "Degraded"
 
-info_col1, info_col2 = st.columns([2, 1])
-with info_col1:
-    st.markdown(f"### {layer_label(selected_layer)}")
-    st.write(selected_layer["description"])
-with info_col2:
-    st.markdown("**Where it lives**")
-    st.write(selected_layer["lives"])
-    st.markdown("**Execution**")
-    st.write(selected_layer["exec_type"])
-
 with st.container(border=True):
+    st.markdown(f"### {layer_label(selected_layer)}")
+    meta_col1, meta_col2 = st.columns([2, 1])
+    with meta_col1:
+        st.write(selected_layer["description"])
+    with meta_col2:
+        st.markdown("**Where it lives**")
+        st.write(selected_layer["lives"])
+        st.markdown("**Execution**")
+        st.write(selected_layer["exec_type"])
+
     st.markdown("**Interpreted Summary**")
     st.write(selected_summary)
     if selected_version:
         st.write(f"Version / identity: {selected_version}")
-    if selected_key == "L4.3":
-        cni_confidence = state.get("evidence", {}).get("cni", {}).get("confidence", "unknown")
-        st.write(f"Confidence: {cni_confidence}")
     st.write(f"Health / status: {status_label}")
     st.caption(f"Suggested debug entry point: `{selected_layer['api']}`")
+    if selected_key == "L4.3":
+        st.caption(
+            "Confidence key: high = agreeing direct evidence across sources; medium = one source or mixed support; low = insufficient direct evidence."
+        )
 
-detail_tab_explain, detail_tab_raw = st.tabs(["Explain", "Evidence (Raw)"])
-
-with detail_tab_explain:
-    st.caption("This tab shows the interpreted explanation generated from the structured state and deterministic ELS logic.")
+with st.expander("Explain", expanded=True):
+    st.caption("Interpreted explanation generated from the structured state and deterministic ELS logic.")
     if st.button(f"Explain {layer_label(selected_layer)}", key=f"explain_{selected_key}"):
         explanation = ask_llm(
             f"Explain current state of {selected_layer['name']}",
@@ -789,31 +789,11 @@ with detail_tab_explain:
     elif "raw_text" in parsed:
         st.write(parsed["raw_text"])
     else:
-        tab_els, tab_answer, tab_learning, tab_trace, tab_raw = st.tabs(
-            ["ELS", "Answer", "Learning", "Trace", "Raw JSON"]
+        explain_tab_answer, explain_tab_learning, explain_tab_trace, explain_tab_raw = st.tabs(
+            ["Answer", "Learning", "Trace", "Raw JSON"]
         )
 
-        with tab_els:
-            els = parsed.get("els", {})
-            st.markdown("#### ELS Analysis")
-            st.markdown(f"**Layer:** {els.get('layer', 'Unknown')}")
-            st.markdown(f"**Layer Number:** {els.get('layer_number', '')}")
-            st.markdown(f"**Layer Name:** {els.get('layer_name', '')}")
-            st.markdown("**Explanation:**")
-            st.write(els.get("explanation", ""))
-
-            next_steps = els.get("next_steps", [])
-            if next_steps:
-                st.markdown("**Next Steps:**")
-                for step in next_steps:
-                    st.write(f"- {step}")
-
-            mapped_context = els.get("mapped_context", {})
-            if mapped_context:
-                with st.expander("ELS mapped context"):
-                    st.json(mapped_context)
-
-        with tab_answer:
+        with explain_tab_answer:
             st.markdown("#### Answer")
             st.write(parsed.get("answer", ""))
 
@@ -828,7 +808,14 @@ with detail_tab_explain:
                 for warning in warnings:
                     st.warning(warning)
 
-        with tab_learning:
+            els = parsed.get("els", {})
+            next_steps = els.get("next_steps", [])
+            if next_steps:
+                st.markdown("#### Next Steps")
+                for step in next_steps:
+                    st.write(f"- {step}")
+
+        with explain_tab_learning:
             learning = parsed.get("learning", {})
 
             learn_col1, learn_col2 = st.columns(2)
@@ -847,7 +834,7 @@ with detail_tab_explain:
                 st.markdown("#### Product")
                 st.write(learning.get("product", "No Product learning view returned."))
 
-        with tab_trace:
+        with explain_tab_trace:
             trace = parsed.get("agent_trace", [])
             if trace:
                 for step in trace:
@@ -857,11 +844,11 @@ with detail_tab_explain:
             else:
                 st.write("No agent trace returned.")
 
-        with tab_raw:
+        with explain_tab_raw:
             st.json(parsed)
 
-with detail_tab_raw:
-    st.caption("This tab shows the raw supporting evidence for the selected layer without interpretation.")
+with st.expander("Evidence (Raw)", expanded=False):
+    st.caption("Raw supporting evidence for the selected layer without interpretation.")
     st.text(get_expand_text(selected_key, state)[:6000])
 
 st.divider()
