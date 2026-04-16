@@ -85,6 +85,11 @@ def normalize_collected_state(collected_state: dict) -> dict:
     capabilities = cni_evidence.get("capabilities", {})
     policy_presence = cni_evidence.get("policy_presence", {})
     migration_note = cni_evidence.get("migration_note", "unknown")
+    policy_label = {
+        "present": "present",
+        "absent": "none detected",
+        "unknown": "unknown",
+    }.get(policy_presence.get("status", "unknown"), policy_presence.get("status", "unknown"))
 
     missing_or_unverified = []
     if cluster_level.get("cni", "unknown") == "unknown":
@@ -128,7 +133,7 @@ def normalize_collected_state(collected_state: dict) -> dict:
         f"observability: {capabilities.get('observability', 'unknown')}\n"
         f"inference basis: {capabilities.get('inference_basis', 'unknown')}\n\n"
         "[policy presence summary]\n"
-        f"status: {policy_presence.get('status', 'unknown')}\n"
+        f"status: {policy_label}\n"
         f"count: {policy_presence.get('count', 0)}\n"
         f"namespaces: {', '.join(policy_presence.get('namespaces', [])) or '(none)'}\n\n"
         "[migration or reconciliation note]\n"
@@ -450,6 +455,7 @@ Use precise language:
 - prefer phrasing like high-confidence inference, well-supported conclusion, and supported by direct cluster-level evidence over wording that overstates certainty
 - do not overclaim when evidence is partial or conflicting
 - do not treat pod IP assignment alone as primary CNI identification evidence
+- do not imply observed policy enforcement when only platform capability or NetworkPolicy object presence is shown
 - when primary_layer_context contains structured CNI evidence, treat it as the authoritative basis for the explanation ahead of the generic compact context
 - do not warn that generic pod listings are truncated if primary_layer_context already contains sufficient cluster-level CNI evidence
 - only warn about incomplete, weak, or conflicting evidence when the primary_layer_context itself shows that limitation

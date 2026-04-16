@@ -355,28 +355,28 @@ def _infer_cni_capabilities(cni_name: str) -> Dict[str, str]:
     """
     capability_map = {
         "cilium": {
-            "summary": "policy-aware dataplane",
-            "policy_support": "likely supported by platform",
-            "observability": "enhanced platform telemetry likely available",
+            "summary": "policy-capable dataplane likely",
+            "policy_support": "platform likely supports network policy features",
+            "observability": "enhanced platform telemetry may be available",
         },
         "calico": {
-            "summary": "policy-aware dataplane",
-            "policy_support": "likely supported by platform",
-            "observability": "platform telemetry likely available",
+            "summary": "policy-capable dataplane likely",
+            "policy_support": "platform likely supports network policy features",
+            "observability": "platform telemetry may be available",
         },
         "canal": {
-            "summary": "policy-aware combined deployment",
-            "policy_support": "likely supported by platform",
+            "summary": "policy-capable combined deployment likely",
+            "policy_support": "platform likely supports network policy features",
             "observability": "platform-dependent telemetry may be available",
         },
         "flannel": {
-            "summary": "basic pod networking dataplane",
-            "policy_support": "not indicated by current detection alone",
+            "summary": "basic pod networking dataplane inferred",
+            "policy_support": "network policy support is not indicated by current detection alone",
             "observability": "basic networking visibility inferred",
         },
         "weave": {
-            "summary": "overlay networking dataplane",
-            "policy_support": "possible but not verified from current detection alone",
+            "summary": "overlay networking dataplane inferred",
+            "policy_support": "network policy support may exist but is not verified from current detection alone",
             "observability": "basic platform visibility inferred",
         },
     }

@@ -129,7 +129,7 @@ class TestCniDetection(unittest.TestCase):
         self.assertEqual(state["evidence"]["cni"]["cluster_level"], cluster_detection)
         self.assertEqual(state["evidence"]["cni"]["confidence"], "high")
         self.assertEqual(state["evidence"]["cni"]["reconciliation"], "agree")
-        self.assertEqual(state["evidence"]["cni"]["capabilities"]["summary"], "policy-aware dataplane")
+        self.assertEqual(state["evidence"]["cni"]["capabilities"]["summary"], "policy-capable dataplane likely")
         self.assertEqual(state["evidence"]["cni"]["policy_presence"]["status"], "unknown")
         self.assertEqual(
             state["evidence"]["cni"]["migration_note"],
@@ -232,7 +232,10 @@ class TestCniDetection(unittest.TestCase):
         self.assertEqual(state["evidence"]["cni"]["policy_presence"]["status"], "present")
         self.assertEqual(state["evidence"]["cni"]["policy_presence"]["count"], 1)
         self.assertEqual(state["evidence"]["cni"]["policy_presence"]["namespaces"], ["default"])
-        self.assertEqual(state["evidence"]["cni"]["capabilities"]["policy_support"], "likely supported by platform")
+        self.assertEqual(
+            state["evidence"]["cni"]["capabilities"]["policy_support"],
+            "platform likely supports network policy features",
+        )
 
 
 if __name__ == "__main__":

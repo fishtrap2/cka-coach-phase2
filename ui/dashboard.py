@@ -149,6 +149,11 @@ def summarize(state: dict) -> dict:
     cni_evidence = state.get("evidence", {}).get("cni", {})
     capability_summary = cni_evidence.get("capabilities", {}).get("summary", "unknown")
     policy_status = cni_evidence.get("policy_presence", {}).get("status", "unknown")
+    policy_label = {
+        "present": "present",
+        "absent": "none detected",
+        "unknown": "unknown",
+    }.get(policy_status, policy_status)
 
     if kubelet_ok is True:
         kubelet_text = "kubelet running"
@@ -179,7 +184,7 @@ def summarize(state: dict) -> dict:
         "L4.1": (kubelet_text, kubelet_ok is True),
         "L4.2": ("kube-proxy / service routing", True),
         "L4.3": (
-            f"CNI: {cni_name or 'unknown'} | capability: {capability_summary} | policy: {policy_status}",
+            f"CNI: {cni_name or 'unknown'} | capability: {capability_summary} | policy: {policy_label}",
             True,
         ),
         "L3": (containerd_text, containerd_ok is True),
@@ -236,6 +241,11 @@ def format_cni_detection_evidence(state: dict) -> str:
     confidence = detection.get("confidence", "low")
     reconciliation = detection.get("reconciliation", "unknown")
     cni_name = summary_versions.get("cni", versions.get("cni", "")) or "unknown"
+    policy_label = {
+        "present": "present",
+        "absent": "none detected",
+        "unknown": "unknown",
+    }.get(policy_presence.get("status", "unknown"), policy_presence.get("status", "unknown"))
 
     return (
         "[cni detection]\n"
@@ -260,7 +270,7 @@ def format_cni_detection_evidence(state: dict) -> str:
         f"observability: {capabilities.get('observability', 'unknown')}\n"
         f"inference basis: {capabilities.get('inference_basis', 'unknown')}\n\n"
         "[policy presence summary]\n"
-        f"status: {policy_presence.get('status', 'unknown')}\n"
+        f"status: {policy_label}\n"
         f"count: {policy_presence.get('count', 0)}\n"
         f"namespaces: {', '.join(policy_presence.get('namespaces', [])) or '(none)'}\n\n"
         "[migration or reconciliation note]\n"
