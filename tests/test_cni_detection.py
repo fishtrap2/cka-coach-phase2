@@ -181,6 +181,48 @@ class TestCniDetection(unittest.TestCase):
         self.assertEqual(state["evidence"]["cni"]["reconciliation"], "conflict")
         self.assertEqual(state["health"]["cni_ok"], "degraded")
 
+    def test_collect_state_marks_single_source_cni_as_unknown_health(self):
+        node_detection = {
+            "cni": "unknown",
+            "filenames": [],
+            "selected_file": "",
+            "confidence": "low",
+        }
+        cluster_detection = {
+            "cni": "cilium",
+            "matched_pods": ["cilium-abcde", "cilium-operator-12345"],
+            "selected_pod": "cilium-abcde",
+            "confidence": "high",
+        }
+        with patch.object(state_collector, "_safe_kubectl", return_value=""), patch.object(
+            state_collector, "_safe_systemctl", return_value=""
+        ), patch.object(state_collector, "_safe_crictl", return_value=""), patch.object(
+            state_collector, "_safe_ip", return_value=""
+        ), patch.object(
+            state_collector, "_run_command", return_value=""
+        ), patch.object(
+            state_collector, "_safe_kubectl_version_short", return_value=""
+        ), patch.object(
+            state_collector, "_safe_kubectl_version_json", return_value=""
+        ), patch.object(
+            state_collector, "_safe_uname", return_value=""
+        ), patch.object(
+            state_collector, "_safe_containerd_version", return_value=""
+        ), patch.object(
+            state_collector, "_safe_kubelet_version", return_value=""
+        ), patch.object(
+            state_collector, "_safe_runc_version", return_value=""
+        ), patch.object(
+            state_collector, "_detect_cni", return_value=node_detection
+        ), patch.object(
+            state_collector, "_detect_cni_from_pods", return_value=cluster_detection
+        ):
+            state = state_collector.collect_state()
+
+        self.assertEqual(state["summary"]["versions"]["cni"], "cilium")
+        self.assertEqual(state["evidence"]["cni"]["reconciliation"], "single_source")
+        self.assertEqual(state["health"]["cni_ok"], "unknown")
+
     def test_collect_state_includes_policy_presence_when_network_policy_exists(self):
         node_detection = {
             "cni": "calico",

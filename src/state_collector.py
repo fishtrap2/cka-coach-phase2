@@ -562,10 +562,12 @@ def _health_flags(
         cni_ok = "unknown"
     elif cni_reconciliation == "agree":
         cni_ok = "healthy"
-    elif cni_reconciliation in {"single_source", "conflict"}:
+    elif cni_reconciliation == "conflict":
         cni_ok = "degraded"
+    elif cni_reconciliation == "single_source":
+        cni_ok = "unknown"
     else:
-        cni_ok = "degraded"
+        cni_ok = "unknown"
 
     return {
         "pods_pending": pods_pending,
