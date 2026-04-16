@@ -10,6 +10,34 @@ import state_collector
 
 
 class TestCniDetection(unittest.TestCase):
+    def test_detect_cni_config_spec_version_from_selected_config_content(self):
+        config_content = """
+        {
+          "cniVersion": "0.3.1",
+          "name": "cilium",
+          "plugins": [{"type": "cilium-cni"}]
+        }
+        """
+
+        result = state_collector._detect_cni_config_spec_version(
+            config_content,
+            "05-cilium.conflist",
+        )
+
+        self.assertEqual(result["value"], "0.3.1")
+        self.assertEqual(result["source"], "selected_cni_config_content")
+        self.assertEqual(result["file"], "05-cilium.conflist")
+
+    def test_detect_cni_config_spec_version_absent_without_trustworthy_content(self):
+        result = state_collector._detect_cni_config_spec_version(
+            "",
+            "05-cilium.conflist",
+        )
+
+        self.assertEqual(result["value"], "unknown")
+        self.assertEqual(result["source"], "missing_cni_config_content")
+        self.assertEqual(result["file"], "05-cilium.conflist")
+
     def test_detect_cni_version_from_image_tag_when_trustworthy(self):
         cluster_detection = {
             "cni": "cilium",
@@ -194,11 +222,16 @@ class TestCniDetection(unittest.TestCase):
                 "pod": "calico-node-abcde",
                 "image": "docker.io/calico/node:v3.30.0",
             },
+        ), patch.object(
+            state_collector,
+            "_read_selected_cni_config",
+            return_value='{"cniVersion": "0.3.1", "name": "calico"}',
         ):
             state = state_collector.collect_state()
 
         self.assertEqual(state["summary"]["versions"]["cni"], "calico")
         self.assertEqual(state["summary"]["versions"]["cni_version"], "v3.30.0")
+        self.assertEqual(state["summary"]["versions"]["cni_config_spec_version"], "0.3.1")
         self.assertEqual(state["evidence"]["cni"]["node_level"], node_detection)
         self.assertEqual(state["evidence"]["cni"]["cluster_level"], cluster_detection)
         self.assertEqual(state["evidence"]["cni"]["confidence"], "high")
@@ -206,6 +239,8 @@ class TestCniDetection(unittest.TestCase):
         self.assertEqual(state["evidence"]["cni"]["capabilities"]["summary"], "policy-capable dataplane likely")
         self.assertEqual(state["evidence"]["cni"]["policy_presence"]["status"], "unknown")
         self.assertEqual(state["evidence"]["cni"]["version"]["value"], "v3.30.0")
+        self.assertEqual(state["evidence"]["cni"]["config_spec_version"]["value"], "0.3.1")
+        self.assertIn('"cniVersion": "0.3.1"', state["evidence"]["cni"]["config_content"])
         self.assertEqual(
             state["evidence"]["cni"]["migration_note"],
             "Cluster-level and node-level evidence agree on the current CNI.",
@@ -305,6 +340,7 @@ class TestCniDetection(unittest.TestCase):
 
         self.assertEqual(state["summary"]["versions"]["cni"], "cilium")
         self.assertEqual(state["summary"]["versions"]["cni_version"], "unknown")
+        self.assertEqual(state["summary"]["versions"]["cni_config_spec_version"], "unknown")
         self.assertEqual(state["evidence"]["cni"]["reconciliation"], "single_source")
         self.assertEqual(state["health"]["cni_ok"], "unknown")
 

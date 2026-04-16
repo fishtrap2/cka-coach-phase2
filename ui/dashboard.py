@@ -242,6 +242,8 @@ def format_cni_detection_evidence(state: dict) -> str:
     capabilities = detection.get("capabilities", {})
     policy_presence = detection.get("policy_presence", {})
     version = detection.get("version", {})
+    config_spec_version = detection.get("config_spec_version", {})
+    config_content = detection.get("config_content", "")
     migration_note = detection.get("migration_note", "unknown")
 
     filenames = node_level.get("filenames", [])
@@ -286,6 +288,12 @@ def format_cni_detection_evidence(state: dict) -> str:
         f"source: {version.get('source', 'unknown')}\n"
         f"pod: {version.get('pod', '') or '(none)'}\n"
         f"image: {version.get('image', '') or '(none)'}\n\n"
+        "[cni config spec evidence]\n"
+        f"observed cniVersion: {config_spec_version.get('value', 'unknown')}\n"
+        f"source: {config_spec_version.get('source', 'unknown')}\n"
+        f"file: {config_spec_version.get('file', '') or '(none)'}\n"
+        "selected config content:\n"
+        f"{config_content or '(none)'}\n\n"
         "[policy presence summary]\n"
         f"status: {policy_label}\n"
         f"count: {policy_presence.get('count', 0)}\n"
@@ -743,6 +751,7 @@ selected_summary, _ = summary.get(selected_key, ("...", True))
 selected_version = versions_map.get(selected_key, "")
 selected_status = layer_status(selected_key, health)
 cni_confidence = state.get("evidence", {}).get("cni", {}).get("confidence", "unknown")
+cni_config_spec = state.get("summary", {}).get("versions", {}).get("cni_config_spec_version", "unknown")
 
 status_label = "Unknown / limited visibility"
 if selected_status is True or selected_status == "healthy":
@@ -765,6 +774,8 @@ with st.container(border=True):
     st.write(selected_summary)
     if selected_version:
         st.write(f"Version / identity: {selected_version}")
+    if selected_key == "L4.3" and cni_config_spec not in {"", "unknown"}:
+        st.write(f"CNI config spec: {cni_config_spec}")
     st.write(f"Health / status: {status_label}")
     st.caption(f"Suggested debug entry point: `{selected_layer['api']}`")
     if selected_key == "L4.3":

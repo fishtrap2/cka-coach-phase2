@@ -85,6 +85,8 @@ def normalize_collected_state(collected_state: dict) -> dict:
     capabilities = cni_evidence.get("capabilities", {})
     policy_presence = cni_evidence.get("policy_presence", {})
     version = cni_evidence.get("version", {})
+    config_spec_version = cni_evidence.get("config_spec_version", {})
+    config_content = cni_evidence.get("config_content", "")
     migration_note = cni_evidence.get("migration_note", "unknown")
     policy_label = {
         "present": "present",
@@ -97,6 +99,8 @@ def normalize_collected_state(collected_state: dict) -> dict:
         missing_or_unverified.append("No recognized kube-system CNI pod names were detected.")
     if node_level.get("cni", "unknown") == "unknown":
         missing_or_unverified.append("No recognized node-level CNI config filename was detected.")
+    elif not config_content.strip():
+        missing_or_unverified.append("Node-level CNI config content was not directly collected from the selected file.")
     if cni_evidence.get("reconciliation", "unknown") == "conflict":
         missing_or_unverified.append(
             "Cluster-level and node-level signals conflict, so the result is a lower-certainty inference rather than a well-supported conclusion."
@@ -138,6 +142,12 @@ def normalize_collected_state(collected_state: dict) -> dict:
         f"source: {version.get('source', 'unknown')}\n"
         f"pod: {version.get('pod', '') or '(none)'}\n"
         f"image: {version.get('image', '') or '(none)'}\n\n"
+        "[cni config spec evidence]\n"
+        f"observed cniVersion: {config_spec_version.get('value', 'unknown')}\n"
+        f"source: {config_spec_version.get('source', 'unknown')}\n"
+        f"file: {config_spec_version.get('file', '') or '(none)'}\n"
+        "selected config content:\n"
+        f"{config_content or '(none)'}\n\n"
         "[policy presence summary]\n"
         f"status: {policy_label}\n"
         f"count: {policy_presence.get('count', 0)}\n"

@@ -231,6 +231,16 @@ def _detect_cni() -> Dict[str, Any]:
     return result
 
 
+def _read_selected_cni_config(selected_file: str) -> str:
+    """
+    Read the selected CNI config file content when directly observable.
+    """
+    if not selected_file:
+        return ""
+
+    return _run_command(f"cat /etc/cni/net.d/{selected_file} 2>/dev/null")
+
+
 def _detect_cni_from_pods(pods_text: str) -> Dict[str, Any]:
     """
     Best-effort cluster-level CNI detection from kube-system pod names.
@@ -528,6 +538,44 @@ def _detect_cni_version_from_pod_images(
     }
 
 
+def _detect_cni_config_spec_version(
+    config_content: str,
+    selected_file: str,
+) -> Dict[str, str]:
+    """
+    Detect the CNI config spec version from directly observed config content.
+    """
+    if not selected_file or not config_content.strip():
+        return {
+            "value": "unknown",
+            "source": "missing_cni_config_content",
+            "file": selected_file or "",
+        }
+
+    try:
+        data = json.loads(config_content)
+    except Exception:
+        return {
+            "value": "unknown",
+            "source": "unparseable_cni_config_content",
+            "file": selected_file,
+        }
+
+    config_version = str(data.get("cniVersion", "")).strip()
+    if not config_version:
+        return {
+            "value": "unknown",
+            "source": "cni_config_version_not_present",
+            "file": selected_file,
+        }
+
+    return {
+        "value": config_version,
+        "source": "selected_cni_config_content",
+        "file": selected_file,
+    }
+
+
 def _detect_cni_name() -> str:
     """
     Backward-compatible string-only CNI detector.
@@ -745,6 +793,13 @@ def collect_state() -> Dict[str, Any]:
         cluster_cni_detection,
         runtime.get("kube_system_pods_json", ""),
     )
+    cni_config_content = _read_selected_cni_config(
+        node_cni_detection.get("selected_file", "")
+    )
+    cni_config_spec_version = _detect_cni_config_spec_version(
+        cni_config_content,
+        node_cni_detection.get("selected_file", ""),
+    )
     migration_note = _build_cni_migration_note(
         combined_cni_detection.get("reconciliation", "unknown"),
         node_cni_detection,
@@ -766,6 +821,7 @@ def collect_state() -> Dict[str, Any]:
         "versions": {
             "cni": versions.get("cni", "unknown"),
             "cni_version": cni_version.get("value", "unknown"),
+            "cni_config_spec_version": cni_config_spec_version.get("value", "unknown"),
         }
     }
 
@@ -777,6 +833,8 @@ def collect_state() -> Dict[str, Any]:
             "capabilities": capabilities,
             "policy_presence": policy_presence,
             "version": cni_version,
+            "config_spec_version": cni_config_spec_version,
+            "config_content": cni_config_content,
             "migration_note": migration_note,
             "node_level": node_cni_detection,
             "cluster_level": cluster_cni_detection,
