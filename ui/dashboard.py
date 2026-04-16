@@ -149,6 +149,7 @@ def summarize(state: dict) -> dict:
     cni_evidence = state.get("evidence", {}).get("cni", {})
     capability_summary = cni_evidence.get("capabilities", {}).get("summary", "unknown")
     policy_status = cni_evidence.get("policy_presence", {}).get("status", "unknown")
+    cni_version = summary_versions.get("cni_version", "unknown")
     policy_label = {
         "present": "present",
         "absent": "none detected",
@@ -200,6 +201,8 @@ def map_versions_to_layers(state: dict) -> dict:
     """
     v = state.get("versions", {})
     summary_versions = state.get("summary", {}).get("versions", {})
+    cni_name = summary_versions.get("cni", v.get("cni", ""))
+    cni_version = summary_versions.get("cni_version", "unknown")
     return {
         "L9": "",
         "L8": "",
@@ -209,7 +212,11 @@ def map_versions_to_layers(state: dict) -> dict:
         "L5": v.get("api", ""),
         "L4.1": v.get("kubelet", ""),
         "L4.2": v.get("api", ""),
-        "L4.3": summary_versions.get("cni", v.get("cni", "")),
+        "L4.3": (
+            f"{cni_name} | v{cni_version}"
+            if cni_name and cni_name != "unknown" and cni_version not in {"", "unknown"}
+            else cni_name
+        ),
         "L3": v.get("containerd", ""),
         "L2": v.get("runc", ""),
         "L1": v.get("kernel", ""),
@@ -230,6 +237,7 @@ def format_cni_detection_evidence(state: dict) -> str:
     cluster_level = detection.get("cluster_level", {})
     capabilities = detection.get("capabilities", {})
     policy_presence = detection.get("policy_presence", {})
+    version = detection.get("version", {})
     migration_note = detection.get("migration_note", "unknown")
 
     filenames = node_level.get("filenames", [])
@@ -269,6 +277,11 @@ def format_cni_detection_evidence(state: dict) -> str:
         f"policy support: {capabilities.get('policy_support', 'unknown')}\n"
         f"observability: {capabilities.get('observability', 'unknown')}\n"
         f"inference basis: {capabilities.get('inference_basis', 'unknown')}\n\n"
+        "[version evidence]\n"
+        f"observed version: {version.get('value', 'unknown')}\n"
+        f"source: {version.get('source', 'unknown')}\n"
+        f"pod: {version.get('pod', '') or '(none)'}\n"
+        f"image: {version.get('image', '') or '(none)'}\n\n"
         "[policy presence summary]\n"
         f"status: {policy_label}\n"
         f"count: {policy_presence.get('count', 0)}\n"

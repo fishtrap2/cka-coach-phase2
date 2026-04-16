@@ -10,6 +10,70 @@ import state_collector
 
 
 class TestCniDetection(unittest.TestCase):
+    def test_detect_cni_version_from_image_tag_when_trustworthy(self):
+        cluster_detection = {
+            "cni": "cilium",
+            "matched_pods": ["cilium-abcde", "cilium-operator-12345"],
+            "selected_pod": "cilium-abcde",
+            "confidence": "high",
+        }
+        kube_system_pods_json = """
+        {
+          "items": [
+            {
+              "metadata": {"name": "cilium-abcde"},
+              "spec": {"containers": [{"image": "quay.io/cilium/cilium:v1.16.3"}]}
+            },
+            {
+              "metadata": {"name": "cilium-operator-12345"},
+              "spec": {"containers": [{"image": "quay.io/cilium/operator-generic:v1.16.3"}]}
+            }
+          ]
+        }
+        """
+
+        result = state_collector._detect_cni_version_from_pod_images(
+            "cilium",
+            cluster_detection,
+            kube_system_pods_json,
+        )
+
+        self.assertEqual(result["value"], "v1.16.3")
+        self.assertEqual(result["source"], "kube_system_pod_image_tag")
+        self.assertEqual(result["pod"], "cilium-abcde")
+        self.assertEqual(result["image"], "quay.io/cilium/cilium:v1.16.3")
+
+    def test_detect_cni_version_absent_when_no_single_trustworthy_tag_exists(self):
+        cluster_detection = {
+            "cni": "cilium",
+            "matched_pods": ["cilium-abcde", "cilium-operator-12345"],
+            "selected_pod": "cilium-abcde",
+            "confidence": "high",
+        }
+        kube_system_pods_json = """
+        {
+          "items": [
+            {
+              "metadata": {"name": "cilium-abcde"},
+              "spec": {"containers": [{"image": "quay.io/cilium/cilium:v1.16.3"}]}
+            },
+            {
+              "metadata": {"name": "cilium-operator-12345"},
+              "spec": {"containers": [{"image": "quay.io/cilium/operator-generic:v1.16.4"}]}
+            }
+          ]
+        }
+        """
+
+        result = state_collector._detect_cni_version_from_pod_images(
+            "cilium",
+            cluster_detection,
+            kube_system_pods_json,
+        )
+
+        self.assertEqual(result["value"], "unknown")
+        self.assertEqual(result["source"], "no_single_trustworthy_image_tag")
+
     def test_recognized_cni_filename(self):
         with patch.object(state_collector, "_command_exists", return_value=True), patch.object(
             state_collector, "_run_command", return_value="10-calico.conflist\n"
@@ -121,16 +185,27 @@ class TestCniDetection(unittest.TestCase):
             state_collector, "_detect_cni", return_value=node_detection
         ), patch.object(
             state_collector, "_detect_cni_from_pods", return_value=cluster_detection
+        ), patch.object(
+            state_collector,
+            "_detect_cni_version_from_pod_images",
+            return_value={
+                "value": "v3.30.0",
+                "source": "kube_system_pod_image_tag",
+                "pod": "calico-node-abcde",
+                "image": "docker.io/calico/node:v3.30.0",
+            },
         ):
             state = state_collector.collect_state()
 
         self.assertEqual(state["summary"]["versions"]["cni"], "calico")
+        self.assertEqual(state["summary"]["versions"]["cni_version"], "v3.30.0")
         self.assertEqual(state["evidence"]["cni"]["node_level"], node_detection)
         self.assertEqual(state["evidence"]["cni"]["cluster_level"], cluster_detection)
         self.assertEqual(state["evidence"]["cni"]["confidence"], "high")
         self.assertEqual(state["evidence"]["cni"]["reconciliation"], "agree")
         self.assertEqual(state["evidence"]["cni"]["capabilities"]["summary"], "policy-capable dataplane likely")
         self.assertEqual(state["evidence"]["cni"]["policy_presence"]["status"], "unknown")
+        self.assertEqual(state["evidence"]["cni"]["version"]["value"], "v3.30.0")
         self.assertEqual(
             state["evidence"]["cni"]["migration_note"],
             "Cluster-level and node-level evidence agree on the current CNI.",
@@ -216,10 +291,20 @@ class TestCniDetection(unittest.TestCase):
             state_collector, "_detect_cni", return_value=node_detection
         ), patch.object(
             state_collector, "_detect_cni_from_pods", return_value=cluster_detection
+        ), patch.object(
+            state_collector,
+            "_detect_cni_version_from_pod_images",
+            return_value={
+                "value": "unknown",
+                "source": "no_single_trustworthy_image_tag",
+                "pod": "",
+                "image": "",
+            },
         ):
             state = state_collector.collect_state()
 
         self.assertEqual(state["summary"]["versions"]["cni"], "cilium")
+        self.assertEqual(state["summary"]["versions"]["cni_version"], "unknown")
         self.assertEqual(state["evidence"]["cni"]["reconciliation"], "single_source")
         self.assertEqual(state["health"]["cni_ok"], "unknown")
 

@@ -446,6 +446,88 @@ def _build_cni_migration_note(
     return "Not enough evidence is available to identify the current CNI confidently."
 
 
+def _extract_image_tag(image: str) -> str:
+    """
+    Extract an explicit image tag when present.
+    """
+    if not image:
+        return ""
+
+    image_without_digest = image.split("@", 1)[0]
+    last_segment = image_without_digest.rsplit("/", 1)[-1]
+    if ":" not in last_segment:
+        return ""
+
+    return image_without_digest.rsplit(":", 1)[-1].strip()
+
+
+def _detect_cni_version_from_pod_images(
+    cni_name: str,
+    cluster_level: Dict[str, Any],
+    kube_system_pods_json: str,
+) -> Dict[str, Any]:
+    """
+    Detect a CNI version only when directly evidenced by kube-system pod image tags.
+    """
+    if cni_name in {"", "unknown"} or not kube_system_pods_json.strip():
+        return {
+            "value": "unknown",
+            "source": "insufficient_cluster_image_evidence",
+            "pod": "",
+            "image": "",
+        }
+
+    try:
+        data = json.loads(kube_system_pods_json)
+    except Exception:
+        return {
+            "value": "unknown",
+            "source": "unparseable_cluster_image_evidence",
+            "pod": "",
+            "image": "",
+        }
+
+    matched_pods = set(cluster_level.get("matched_pods", []))
+    relevant_images = []
+
+    for item in data.get("items", []):
+        metadata = item.get("metadata", {})
+        pod_name = metadata.get("name", "")
+        if matched_pods and pod_name not in matched_pods:
+            continue
+        if not matched_pods and cni_name not in pod_name.lower():
+            continue
+
+        spec = item.get("spec", {})
+        containers = spec.get("containers", []) + spec.get("initContainers", [])
+        for container in containers:
+            image = container.get("image", "")
+            tag = _extract_image_tag(image)
+            if tag:
+                relevant_images.append({
+                    "pod": pod_name,
+                    "image": image,
+                    "tag": tag,
+                })
+
+    distinct_tags = sorted({entry["tag"] for entry in relevant_images})
+    if len(distinct_tags) != 1 or not relevant_images:
+        return {
+            "value": "unknown",
+            "source": "no_single_trustworthy_image_tag",
+            "pod": "",
+            "image": "",
+        }
+
+    selected = relevant_images[0]
+    return {
+        "value": distinct_tags[0],
+        "source": "kube_system_pod_image_tag",
+        "pod": selected["pod"],
+        "image": selected["image"],
+    }
+
+
 def _detect_cni_name() -> str:
     """
     Backward-compatible string-only CNI detector.
@@ -640,6 +722,9 @@ def collect_state() -> Dict[str, Any]:
 
         # cluster policy objects
         "network_policies": _safe_kubectl("kubectl get networkpolicy -A"),
+
+        # detailed kube-system pod data used for direct image-tag evidence
+        "kube_system_pods_json": _safe_kubectl("kubectl get pods -n kube-system -o json"),
     }
 
     # --------------------------
@@ -655,6 +740,11 @@ def collect_state() -> Dict[str, Any]:
     )
     policy_presence = _summarize_network_policy_presence(runtime.get("network_policies", ""))
     capabilities = _infer_cni_capabilities(combined_cni_detection.get("cni", "unknown"))
+    cni_version = _detect_cni_version_from_pod_images(
+        combined_cni_detection.get("cni", "unknown"),
+        cluster_cni_detection,
+        runtime.get("kube_system_pods_json", ""),
+    )
     migration_note = _build_cni_migration_note(
         combined_cni_detection.get("reconciliation", "unknown"),
         node_cni_detection,
@@ -675,6 +765,7 @@ def collect_state() -> Dict[str, Any]:
     summary = {
         "versions": {
             "cni": versions.get("cni", "unknown"),
+            "cni_version": cni_version.get("value", "unknown"),
         }
     }
 
@@ -685,6 +776,7 @@ def collect_state() -> Dict[str, Any]:
             "reconciliation": combined_cni_detection.get("reconciliation", "unknown"),
             "capabilities": capabilities,
             "policy_presence": policy_presence,
+            "version": cni_version,
             "migration_note": migration_note,
             "node_level": node_cni_detection,
             "cluster_level": cluster_cni_detection,

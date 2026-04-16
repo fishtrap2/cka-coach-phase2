@@ -84,6 +84,7 @@ def normalize_collected_state(collected_state: dict) -> dict:
     cni_health = health.get("cni_ok", "unknown")
     capabilities = cni_evidence.get("capabilities", {})
     policy_presence = cni_evidence.get("policy_presence", {})
+    version = cni_evidence.get("version", {})
     migration_note = cni_evidence.get("migration_note", "unknown")
     policy_label = {
         "present": "present",
@@ -132,6 +133,11 @@ def normalize_collected_state(collected_state: dict) -> dict:
         f"policy support: {capabilities.get('policy_support', 'unknown')}\n"
         f"observability: {capabilities.get('observability', 'unknown')}\n"
         f"inference basis: {capabilities.get('inference_basis', 'unknown')}\n\n"
+        "[version evidence]\n"
+        f"observed version: {version.get('value', 'unknown')}\n"
+        f"source: {version.get('source', 'unknown')}\n"
+        f"pod: {version.get('pod', '') or '(none)'}\n"
+        f"image: {version.get('image', '') or '(none)'}\n\n"
         "[policy presence summary]\n"
         f"status: {policy_label}\n"
         f"count: {policy_presence.get('count', 0)}\n"
