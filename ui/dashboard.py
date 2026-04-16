@@ -1,5 +1,4 @@
 import streamlit as st
-from streamlit.components.v1 import html as st_html
 import sys
 import os
 import json
@@ -57,6 +56,11 @@ body {
 .small {
     font-size: 11px;
     opacity: 0.9;
+}
+
+.detail-note {
+    font-size: 12px;
+    color: #475569;
 }
 </style>
 """
@@ -149,7 +153,7 @@ def summarize(state: dict) -> dict:
     cni_evidence = state.get("evidence", {}).get("cni", {})
     capability_summary = cni_evidence.get("capabilities", {}).get("summary", "unknown")
     policy_status = cni_evidence.get("policy_presence", {}).get("status", "unknown")
-    cni_version = summary_versions.get("cni_version", "unknown")
+    cni_confidence = cni_evidence.get("confidence", "unknown")
     policy_label = {
         "present": "present",
         "absent": "none detected",
@@ -185,7 +189,7 @@ def summarize(state: dict) -> dict:
         "L4.1": (kubelet_text, kubelet_ok is True),
         "L4.2": ("kube-proxy / service routing", True),
         "L4.3": (
-            f"CNI: {cni_name or 'unknown'} | capability: {capability_summary} | policy: {policy_label}",
+            f"CNI: {cni_name or 'unknown'} | confidence: {cni_confidence} | capability: {capability_summary} | policy: {policy_label}",
             True,
         ),
         "L3": (containerd_text, containerd_ok is True),
@@ -454,8 +458,8 @@ def render_architecture_panel():
               The student uses the <b>ELS Console</b> to inspect the cluster.
               <ul>
                 <li>read the ELS layer table</li>
-                <li>click <b>Explain Lx</b> for AI help</li>
-                <li>open <b>Expand Lx</b> for raw evidence</li>
+                <li>choose a focused layer in <b>Layer Detail</b></li>
+                <li>switch between <b>Explain</b> and <b>Evidence (Raw)</b></li>
               </ul>
             </div>
           </div>
@@ -481,7 +485,7 @@ def render_architecture_panel():
               <ul>
                 <li><b>ELS table</b> = layered system view</li>
                 <li><b>Explain</b> = deterministic ELS + AI explanation</li>
-                <li><b>Expand</b> = raw collected evidence</li>
+                <li><b>Evidence (Raw)</b> = raw collected evidence</li>
               </ul>
             </div>
           </div>
@@ -529,7 +533,8 @@ def render_architecture_panel():
 
         <div class="arch-note">
           <b>Reading guide:</b> The ELS table below is the live layered view of the cluster.
-          <b>Expand</b> shows the raw evidence for a layer.
+          <b>Layer Detail</b> lets you focus on one layer at a time.
+          <b>Evidence (Raw)</b> shows the supporting data for that layer.
           <b>Explain</b> uses structured state + deterministic ELS reasoning + the LLM to teach what that layer means.
         </div>
       </div>
@@ -537,7 +542,7 @@ def render_architecture_panel():
     </html>
     """
     
-    st_html(architecture_html, height=520, scrolling=False)
+    st.html(architecture_html)
 
     with st.expander("Why this is Gen2 and not just a simple chatbot"):
         st.markdown(
@@ -591,6 +596,23 @@ layers = [
     ("1", "Kernel", "Namespaces, cgroups, networking", "guest OS inside provider VM", "persistent_state_machine", "ip / proc / uname -r", "L1"),
     ("0", "VM/Infra", "Virtualized CPU, memory, network interfaces", "hypervisor-provided abstraction", "virtualization_layer", "lscpu ; lsblk", "L0"),
 ]
+
+layer_options = [
+    {
+        "lvl": lvl,
+        "name": name,
+        "description": description,
+        "lives": lives,
+        "exec_type": exec_type,
+        "api": api,
+        "key": key,
+    }
+    for lvl, name, description, lives, exec_type, api, key in layers
+]
+
+
+def layer_label(option: dict) -> str:
+    return f"L{option['lvl']} — {option['name']}"
 
 def layer_status(key: str, health: dict):
     """
@@ -688,7 +710,7 @@ table_html += f"""
 </table>
 """
 
-st_html(table_html, height=800, scrolling=True)
+st.html(table_html)
 st.caption(f"Last refresh: {datetime.now().strftime('%H:%M:%S')}")
 st.warning(
     "Running in container mode: host-level checks (e.g. kubelet, systemctl) may be unavailable. "
@@ -699,118 +721,154 @@ st.warning(
 )
 
 # --------------------------
-# Explain + Expand
+# Layer Detail
 # --------------------------
-# This section gives the student:
-# - a low-level "Expand" view of evidence
-# - a higher-level Explain path powered by the Gen2 agent
+# Keep interpretation and raw evidence separate, but use one focused detail
+# area instead of a long list of per-row Explain/Expand controls.
 st.divider()
 
-for lvl, name, _, _, _, _, key in layers:
-    row_col1, row_col2 = st.columns([1, 3])
+st.markdown("## Layer Detail")
+st.caption("Use one focused selector to move through layers quickly. L4.x stays easy to reach while interpreted explanation and raw evidence remain clearly separated.")
 
-    clicked = False
+default_layer_index = next((i for i, option in enumerate(layer_options) if option["key"] == "L4.3"), 0)
+selected_layer = st.selectbox(
+    "Focus Layer",
+    layer_options,
+    index=default_layer_index,
+    format_func=layer_label,
+)
 
-    with row_col1:
-        clicked = st.button(f"Explain L{lvl}", key=f"btn_{lvl}")
+selected_key = selected_layer["key"]
+selected_summary, _ = summary.get(selected_key, ("...", True))
+selected_version = versions_map.get(selected_key, "")
+selected_status = layer_status(selected_key, health)
 
-    with row_col2:
-        with st.expander(f"Expand L{lvl} — {name}"):
-            st.text(get_expand_text(key, state)[:3000])
+status_label = "Unknown / limited visibility"
+if selected_status is True or selected_status == "healthy":
+    status_label = "Healthy"
+elif selected_status is False or selected_status == "degraded":
+    status_label = "Degraded"
 
-    if clicked:
-        # Important:
-        # ask_llm() now receives the full structured collected state,
-        # not just one text snippet. This keeps the ELS mapping more accurate.
+info_col1, info_col2 = st.columns([2, 1])
+with info_col1:
+    st.markdown(f"### {layer_label(selected_layer)}")
+    st.write(selected_layer["description"])
+with info_col2:
+    st.markdown("**Where it lives**")
+    st.write(selected_layer["lives"])
+    st.markdown("**Execution**")
+    st.write(selected_layer["exec_type"])
+
+with st.container(border=True):
+    st.markdown("**Interpreted Summary**")
+    st.write(selected_summary)
+    if selected_version:
+        st.write(f"Version / identity: {selected_version}")
+    if selected_key == "L4.3":
+        cni_confidence = state.get("evidence", {}).get("cni", {}).get("confidence", "unknown")
+        st.write(f"Confidence: {cni_confidence}")
+    st.write(f"Health / status: {status_label}")
+    st.caption(f"Suggested debug entry point: `{selected_layer['api']}`")
+
+detail_tab_explain, detail_tab_raw = st.tabs(["Explain", "Evidence (Raw)"])
+
+with detail_tab_explain:
+    st.caption("This tab shows the interpreted explanation generated from the structured state and deterministic ELS logic.")
+    if st.button(f"Explain {layer_label(selected_layer)}", key=f"explain_{selected_key}"):
         explanation = ask_llm(
-            f"Explain current state of {name}",
+            f"Explain current state of {selected_layer['name']}",
             state
         )
+        st.session_state[f"explanation_{selected_key}"] = normalize_explanation_output(explanation)
 
-        parsed = normalize_explanation_output(explanation)
+    parsed = st.session_state.get(f"explanation_{selected_key}")
+    if not parsed:
+        st.info("Select a layer and click Explain to load the interpreted explanation.")
+    elif "error" in parsed:
+        st.error(parsed["error"])
+    elif "raw_text" in parsed:
+        st.write(parsed["raw_text"])
+    else:
+        tab_els, tab_answer, tab_learning, tab_trace, tab_raw = st.tabs(
+            ["ELS", "Answer", "Learning", "Trace", "Raw JSON"]
+        )
 
-        st.markdown(f"### Layer {lvl} — {name}")
+        with tab_els:
+            els = parsed.get("els", {})
+            st.markdown("#### ELS Analysis")
+            st.markdown(f"**Layer:** {els.get('layer', 'Unknown')}")
+            st.markdown(f"**Layer Number:** {els.get('layer_number', '')}")
+            st.markdown(f"**Layer Name:** {els.get('layer_name', '')}")
+            st.markdown("**Explanation:**")
+            st.write(els.get("explanation", ""))
 
-        # Full-width output so the explanation is readable and not squeezed
-        # into the narrow left button column.
-        with st.container():
-            if "error" in parsed:
-                st.error(parsed["error"])
-                st.code(str(explanation))
-                continue
+            next_steps = els.get("next_steps", [])
+            if next_steps:
+                st.markdown("**Next Steps:**")
+                for step in next_steps:
+                    st.write(f"- {step}")
 
-            if "raw_text" in parsed:
-                st.subheader("Answer")
-                st.write(parsed["raw_text"])
-                continue
+            mapped_context = els.get("mapped_context", {})
+            if mapped_context:
+                with st.expander("ELS mapped context"):
+                    st.json(mapped_context)
 
-            tab_els, tab_answer, tab_learning, tab_trace, tab_raw = st.tabs(
-                ["ELS", "Answer", "Learning", "Trace", "Raw JSON"]
-            )
+        with tab_answer:
+            st.markdown("#### Answer")
+            st.write(parsed.get("answer", ""))
 
-            with tab_els:
-                els = parsed.get("els", {})
-                st.markdown("#### ELS Analysis")
-                st.markdown(f"**Layer:** {els.get('layer', 'Unknown')}")
-                st.markdown(f"**Layer Number:** {els.get('layer_number', '')}")
-                st.markdown(f"**Layer Name:** {els.get('layer_name', '')}")
-                st.markdown("**Explanation:**")
-                st.write(els.get("explanation", ""))
+            summary_text = parsed.get("summary", "")
+            if summary_text:
+                st.markdown("#### Summary")
+                st.write(summary_text)
 
-                next_steps = els.get("next_steps", [])
-                if next_steps:
-                    st.markdown("**Next Steps:**")
-                    for step in next_steps:
-                        st.write(f"- {step}")
+            warnings = parsed.get("warnings", [])
+            if warnings:
+                st.markdown("#### Warnings")
+                for warning in warnings:
+                    st.warning(warning)
 
-                mapped_context = els.get("mapped_context", {})
-                if mapped_context:
-                    with st.expander("ELS mapped context"):
-                        st.json(mapped_context)
+        with tab_learning:
+            learning = parsed.get("learning", {})
 
-            with tab_answer:
-                st.markdown("#### Answer")
-                st.write(parsed.get("answer", ""))
+            learn_col1, learn_col2 = st.columns(2)
 
-                summary_text = parsed.get("summary", "")
-                if summary_text:
-                    st.markdown("#### Summary")
-                    st.write(summary_text)
+            with learn_col1:
+                st.markdown("#### Kubernetes")
+                st.write(learning.get("kubernetes", "No Kubernetes learning view returned."))
 
-                warnings = parsed.get("warnings", [])
-                if warnings:
-                    st.markdown("#### Warnings")
-                    for warning in warnings:
-                        st.warning(warning)
+                st.markdown("#### AI / Agents")
+                st.write(learning.get("ai", "No AI / Agents learning view returned."))
 
-            with tab_learning:
-                learning = parsed.get("learning", {})
+            with learn_col2:
+                st.markdown("#### Platform")
+                st.write(learning.get("platform", "No Platform learning view returned."))
 
-                learn_col1, learn_col2 = st.columns(2)
+                st.markdown("#### Product")
+                st.write(learning.get("product", "No Product learning view returned."))
 
-                with learn_col1:
-                    st.markdown("#### Kubernetes")
-                    st.write(learning.get("kubernetes", "No Kubernetes learning view returned."))
+        with tab_trace:
+            trace = parsed.get("agent_trace", [])
+            if trace:
+                for step in trace:
+                    with st.expander(f"Step {step.get('step', '?')}: {step.get('action', '')}"):
+                        st.markdown(f"**Why:** {step.get('why', '')}")
+                        st.markdown(f"**Outcome:** {step.get('outcome', '')}")
+            else:
+                st.write("No agent trace returned.")
 
-                    st.markdown("#### AI / Agents")
-                    st.write(learning.get("ai", "No AI / Agents learning view returned."))
+        with tab_raw:
+            st.json(parsed)
 
-                with learn_col2:
-                    st.markdown("#### Platform")
-                    st.write(learning.get("platform", "No Platform learning view returned."))
+with detail_tab_raw:
+    st.caption("This tab shows the raw supporting evidence for the selected layer without interpretation.")
+    st.text(get_expand_text(selected_key, state)[:6000])
 
-                    st.markdown("#### Product")
-                    st.write(learning.get("product", "No Product learning view returned."))
-
-            with tab_trace:
-                trace = parsed.get("agent_trace", [])
-                if trace:
-                    for step in trace:
-                        with st.expander(f"Step {step.get('step', '?')}: {step.get('action', '')}"):
-                            st.markdown(f"**Why:** {step.get('why', '')}")
-                            st.markdown(f"**Outcome:** {step.get('outcome', '')}")
-                else:
-                    st.write("No agent trace returned.")
-
-            with tab_raw:
-                st.json(parsed)
+st.divider()
+st.markdown("## Future Networking Visuals")
+st.caption("Reserved space for a later network or policy diagram. This branch only prepares the layout cleanly.")
+with st.container(border=True):
+    st.markdown(
+        '<div class="detail-note">Future Phase 2 diagram or policy visuals can be placed here below the focused layer detail area.</div>',
+        unsafe_allow_html=True,
+    )
