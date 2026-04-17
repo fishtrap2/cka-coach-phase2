@@ -68,6 +68,11 @@ def ask(
         "--allow-web",
         help="Allow the agent/LLM to use external web information when needed.",
     ),
+    allow_host_evidence: bool = typer.Option(
+        False,
+        "--allow-host-evidence",
+        help="Allow cka-coach to use explicitly exposed host-mounted or user-provided evidence paths.",
+    ),
 ):
     """
     Ask cka-coach a question from the CLI.
@@ -86,7 +91,7 @@ def ask(
     # Use the same structured collection path as the dashboard.
     # This is important because we want one trustworthy source of evidence
     # for both CLI and UI.
-    state = collect_state()
+    state = collect_state(allow_host_evidence=allow_host_evidence)
 
     # Pass through the new switches.
     # NOTE: ask_llm() must be updated to accept these keyword args.

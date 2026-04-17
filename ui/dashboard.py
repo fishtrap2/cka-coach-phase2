@@ -8,6 +8,7 @@ from datetime import datetime
 sys.path.append(os.path.join(os.path.dirname(__file__), "..", "src"))
 
 from state_collector import collect_state
+from dashboard_presenters import cni_config_spec_display
 from agent import ask_llm
 
 st.set_page_config(layout="wide")
@@ -254,6 +255,8 @@ def format_cni_detection_evidence(state: dict) -> str:
     filenames = node_level.get("filenames", [])
     filename_text = "\n".join(filenames) if filenames else "(none found)"
     selected_file = node_level.get("selected_file", "") or "(none)"
+    config_dir = node_level.get("config_dir", "/etc/cni/net.d")
+    directory_status = node_level.get("directory_status", "directory_missing")
     matched_pods = cluster_level.get("matched_pods", [])
     matched_pod_text = "\n".join(matched_pods) if matched_pods else "(none found)"
     selected_pod = cluster_level.get("selected_pod", "") or "(none)"
@@ -274,8 +277,13 @@ def format_cni_detection_evidence(state: dict) -> str:
         "[node-level detection]\n"
         f"detected cni: {node_level.get('cni', 'unknown')}\n"
         f"confidence: {node_level.get('confidence', 'low')}\n"
+        f"host evidence enabled: {node_level.get('host_evidence_enabled', False)}\n"
+        f"config directory used: {config_dir}\n"
+        f"config directory source: {node_level.get('config_dir_source', 'default')}\n"
+        f"config directory status: {directory_status}\n"
+        f"configured override ignored: {node_level.get('configured_override_ignored', False)}\n"
         f"selected file: {selected_file}\n"
-        "files in /etc/cni/net.d:\n"
+        "files in configured CNI directory:\n"
         f"{filename_text}\n\n"
         "[cluster-level detection]\n"
         f"detected cni: {cluster_level.get('cni', 'unknown')}\n"
@@ -583,7 +591,7 @@ with st.expander("Show cka-coach Gen2 architecture", expanded=False):
 # This is now the shared evidence source for the dashboard.
 # Important: the agent also receives this same structured state object.
 with st.spinner("Collecting state..."):
-    state = collect_state()
+    state = collect_state(allow_host_evidence=ALLOW_HOST_EVIDENCE)
 
 summary = summarize(state)
 versions_map = map_versions_to_layers(state)
@@ -757,7 +765,7 @@ selected_version = versions_map.get(selected_key, "")
 selected_status = layer_status(selected_key, health)
 cni_evidence = state.get("evidence", {}).get("cni", {})
 cni_confidence = cni_evidence.get("confidence", "unknown")
-cni_config_spec = state.get("summary", {}).get("versions", {}).get("cni_config_spec_version", "unknown")
+cni_config_spec_ui = cni_config_spec_display(state)
 cni_capability = cni_evidence.get("capabilities", {}).get("summary", "unknown")
 cni_policy_status = cni_evidence.get("policy_presence", {}).get("status", "unknown")
 cni_policy_label = {
@@ -791,11 +799,7 @@ with st.container(border=True):
         with summary_col2:
             st.markdown("**Identity / Version**")
             st.write(selected_version or "unknown")
-            st.write(
-                f"CNI config spec: {cni_config_spec}"
-                if cni_config_spec not in {"", "unknown"}
-                else "CNI config spec: not directly observed"
-            )
+            st.write(f"CNI config spec: {cni_config_spec_ui['label']}")
 
         with summary_col3:
             st.markdown("**Confidence / Status**")
@@ -808,6 +812,8 @@ with st.container(border=True):
             st.write(f"Execution: {selected_layer['exec_type']}")
 
         st.caption(f"Suggested debug entry point: `{selected_layer['api']}`")
+        if not cni_config_spec_ui["observed"]:
+            st.caption(cni_config_spec_ui["note"])
     else:
         meta_col1, meta_col2 = st.columns([2, 1])
         with meta_col1:
@@ -917,3 +923,4 @@ with st.container(border=True):
         '<div class="detail-note">Future Phase 2 diagram or policy visuals can be placed here below the focused layer detail area.</div>',
         unsafe_allow_html=True,
     )
+ALLOW_HOST_EVIDENCE = "--allow-host-evidence" in sys.argv[1:]

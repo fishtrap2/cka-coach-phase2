@@ -1,8 +1,12 @@
 import json
+import os
 import platform
 import shutil
 import subprocess
 from typing import Dict, Any, List
+
+
+DEFAULT_CNI_CONFIG_DIR = "/etc/cni/net.d"
 
 
 def _run_command(command: str) -> str:
@@ -202,43 +206,125 @@ def _select_cni_match(filenames: List[str]) -> Dict[str, str]:
     }
 
 
-def _detect_cni() -> Dict[str, Any]:
+def _resolve_cni_config_dir(allow_host_evidence: bool = False) -> Dict[str, Any]:
+    """
+    Resolve which CNI config directory cka-coach should inspect.
+
+    By default, cka-coach stays least-privilege and uses the standard
+    in-environment path only. A user-provided override is honored only when
+    host-evidence mode is explicitly enabled.
+    """
+    configured_dir = os.environ.get("CKA_COACH_CNI_CONFIG_DIR", "").strip()
+    using_override = bool(configured_dir and allow_host_evidence)
+
+    return {
+        "directory": configured_dir if using_override else DEFAULT_CNI_CONFIG_DIR,
+        "directory_source": "env_override" if using_override else "default",
+        "host_evidence_enabled": allow_host_evidence,
+        "configured_override": configured_dir,
+        "configured_override_ignored": bool(configured_dir and not allow_host_evidence),
+    }
+
+
+def _inspect_cni_config_dir(allow_host_evidence: bool = False) -> Dict[str, Any]:
+    """
+    Inspect the configured CNI config directory without using sudo.
+    """
+    resolution = _resolve_cni_config_dir(allow_host_evidence)
+    directory = resolution["directory"]
+
+    if not os.path.exists(directory):
+        return {
+            **resolution,
+            "directory_status": "directory_missing",
+            "filenames": [],
+        }
+
+    if not os.path.isdir(directory):
+        return {
+            **resolution,
+            "directory_status": "directory_missing",
+            "filenames": [],
+        }
+
+    try:
+        filenames = sorted(
+            entry for entry in os.listdir(directory) if entry and not entry.startswith(".")
+        )
+    except PermissionError:
+        return {
+            **resolution,
+            "directory_status": "unreadable",
+            "filenames": [],
+        }
+    except OSError:
+        return {
+            **resolution,
+            "directory_status": "unreadable",
+            "filenames": [],
+        }
+
+    if not filenames:
+        return {
+            **resolution,
+            "directory_status": "readable_empty",
+            "filenames": [],
+        }
+
+    return {
+        **resolution,
+        "directory_status": "readable",
+        "filenames": filenames,
+    }
+
+
+def _detect_cni(allow_host_evidence: bool = False) -> Dict[str, Any]:
     """
     Best-effort detection of CNI config from /etc/cni/net.d.
 
     This is a lightweight heuristic, not a full parser.
     """
-    if not _command_exists("ls"):
-        return {
-            "cni": "unknown",
-            "filenames": [],
-            "selected_file": "",
-            "confidence": "low",
-        }
-
-    listing = _run_command("ls /etc/cni/net.d/ 2>/dev/null")
-    filenames = _parse_cni_listing(listing)
+    inspection = _inspect_cni_config_dir(allow_host_evidence)
+    filenames = inspection.get("filenames", [])
     if not filenames:
         return {
             "cni": "unknown",
             "filenames": [],
             "selected_file": "",
             "confidence": "low",
+            "config_dir": inspection.get("directory", DEFAULT_CNI_CONFIG_DIR),
+            "config_dir_source": inspection.get("directory_source", "default"),
+            "directory_status": inspection.get("directory_status", "directory_missing"),
+            "host_evidence_enabled": inspection.get("host_evidence_enabled", False),
+            "configured_override_ignored": inspection.get("configured_override_ignored", False),
         }
 
     result = _select_cni_match(filenames)
     result["filenames"] = filenames
+    result["config_dir"] = inspection.get("directory", DEFAULT_CNI_CONFIG_DIR)
+    result["config_dir_source"] = inspection.get("directory_source", "default")
+    result["directory_status"] = inspection.get("directory_status", "readable")
+    result["host_evidence_enabled"] = inspection.get("host_evidence_enabled", False)
+    result["configured_override_ignored"] = inspection.get("configured_override_ignored", False)
     return result
 
 
-def _read_selected_cni_config(selected_file: str) -> str:
+def _read_selected_cni_config(
+    selected_file: str,
+    config_dir: str = DEFAULT_CNI_CONFIG_DIR,
+) -> str:
     """
     Read the selected CNI config file content when directly observable.
     """
     if not selected_file:
         return ""
 
-    return _run_command(f"cat /etc/cni/net.d/{selected_file} 2>/dev/null")
+    file_path = os.path.join(config_dir, selected_file)
+    try:
+        with open(file_path, "r", encoding="utf-8") as handle:
+            return handle.read().strip()
+    except (FileNotFoundError, PermissionError, OSError):
+        return ""
 
 
 def _detect_cni_from_pods(pods_text: str) -> Dict[str, Any]:
@@ -714,7 +800,7 @@ def _health_flags(
     }
 
 
-def collect_state() -> Dict[str, Any]:
+def collect_state(allow_host_evidence: bool = False) -> Dict[str, Any]:
     """
     Collect structured state for cka-coach.
 
@@ -780,7 +866,7 @@ def collect_state() -> Dict[str, Any]:
     # --------------------------
     # These fields are slower-changing metadata that help place the cluster
     # in context and populate table version columns.
-    node_cni_detection = _detect_cni()
+    node_cni_detection = _detect_cni(allow_host_evidence=allow_host_evidence)
     cluster_cni_detection = _detect_cni_from_pods(runtime.get("pods", ""))
     combined_cni_detection = _reconcile_cni_detection(
         node_cni_detection,
@@ -794,7 +880,8 @@ def collect_state() -> Dict[str, Any]:
         runtime.get("kube_system_pods_json", ""),
     )
     cni_config_content = _read_selected_cni_config(
-        node_cni_detection.get("selected_file", "")
+        node_cni_detection.get("selected_file", ""),
+        node_cni_detection.get("config_dir", DEFAULT_CNI_CONFIG_DIR),
     )
     cni_config_spec_version = _detect_cni_config_spec_version(
         cni_config_content,

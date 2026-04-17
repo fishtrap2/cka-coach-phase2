@@ -6,10 +6,80 @@ from unittest.mock import patch
 
 sys.path.append(os.path.join(os.path.dirname(__file__), "..", "src"))
 
+import dashboard_presenters
 import state_collector
 
 
 class TestCniDetection(unittest.TestCase):
+    def test_default_cni_config_dir_behavior(self):
+        with patch.dict(os.environ, {}, clear=True):
+            result = state_collector._resolve_cni_config_dir()
+
+        self.assertEqual(result["directory"], state_collector.DEFAULT_CNI_CONFIG_DIR)
+        self.assertEqual(result["directory_source"], "default")
+        self.assertFalse(result["host_evidence_enabled"])
+        self.assertFalse(result["configured_override_ignored"])
+
+    def test_env_var_override_behavior_requires_host_evidence_opt_in(self):
+        with patch.dict(
+            os.environ,
+            {"CKA_COACH_CNI_CONFIG_DIR": "/tmp/cni-copy"},
+            clear=True,
+        ):
+            disabled = state_collector._resolve_cni_config_dir()
+            enabled = state_collector._resolve_cni_config_dir(allow_host_evidence=True)
+
+        self.assertEqual(disabled["directory"], state_collector.DEFAULT_CNI_CONFIG_DIR)
+        self.assertTrue(disabled["configured_override_ignored"])
+        self.assertEqual(enabled["directory"], "/tmp/cni-copy")
+        self.assertEqual(enabled["directory_source"], "env_override")
+        self.assertTrue(enabled["host_evidence_enabled"])
+
+    def test_missing_cni_directory_behavior(self):
+        with patch.dict(os.environ, {}, clear=True), patch(
+            "state_collector.os.path.exists",
+            return_value=False,
+        ):
+            result = state_collector._inspect_cni_config_dir()
+
+        self.assertEqual(result["directory_status"], "directory_missing")
+        self.assertEqual(result["filenames"], [])
+
+    def test_unreadable_cni_directory_behavior(self):
+        with patch.dict(os.environ, {}, clear=True), patch(
+            "state_collector.os.path.exists",
+            return_value=True,
+        ), patch(
+            "state_collector.os.path.isdir",
+            return_value=True,
+        ), patch(
+            "state_collector.os.listdir",
+            side_effect=PermissionError,
+        ):
+            result = state_collector._inspect_cni_config_dir()
+
+        self.assertEqual(result["directory_status"], "unreadable")
+        self.assertEqual(result["filenames"], [])
+
+    def test_dashboard_wording_for_not_directly_observed_host_evidence(self):
+        state = {
+            "summary": {"versions": {"cni_config_spec_version": "unknown"}},
+            "evidence": {
+                "cni": {
+                    "node_level": {
+                        "config_dir": "/host/etc/cni/net.d",
+                    }
+                }
+            },
+        }
+
+        result = dashboard_presenters.cni_config_spec_display(state)
+
+        self.assertEqual(result["label"], "not directly observed*")
+        self.assertFalse(result["observed"])
+        self.assertIn("does not use sudo by design", result["note"])
+        self.assertIn("--allow-host-evidence", result["note"])
+
     def test_detect_cni_config_spec_version_from_selected_config_content(self):
         config_content = """
         {
@@ -103,8 +173,15 @@ class TestCniDetection(unittest.TestCase):
         self.assertEqual(result["source"], "no_single_trustworthy_image_tag")
 
     def test_recognized_cni_filename(self):
-        with patch.object(state_collector, "_command_exists", return_value=True), patch.object(
-            state_collector, "_run_command", return_value="10-calico.conflist\n"
+        with patch.dict(os.environ, {}, clear=True), patch(
+            "state_collector.os.path.exists",
+            return_value=True,
+        ), patch(
+            "state_collector.os.path.isdir",
+            return_value=True,
+        ), patch(
+            "state_collector.os.listdir",
+            return_value=["10-calico.conflist"],
         ):
             result = state_collector._detect_cni()
 
@@ -112,10 +189,19 @@ class TestCniDetection(unittest.TestCase):
         self.assertEqual(result["filenames"], ["10-calico.conflist"])
         self.assertEqual(result["selected_file"], "10-calico.conflist")
         self.assertEqual(result["confidence"], "high")
+        self.assertEqual(result["config_dir"], state_collector.DEFAULT_CNI_CONFIG_DIR)
+        self.assertEqual(result["directory_status"], "readable")
 
     def test_unknown_generic_filename(self):
-        with patch.object(state_collector, "_command_exists", return_value=True), patch.object(
-            state_collector, "_run_command", return_value="10-containerd-net.conflist\n"
+        with patch.dict(os.environ, {}, clear=True), patch(
+            "state_collector.os.path.exists",
+            return_value=True,
+        ), patch(
+            "state_collector.os.path.isdir",
+            return_value=True,
+        ), patch(
+            "state_collector.os.listdir",
+            return_value=["10-containerd-net.conflist"],
         ):
             result = state_collector._detect_cni()
 
@@ -125,8 +211,15 @@ class TestCniDetection(unittest.TestCase):
         self.assertEqual(result["confidence"], "medium")
 
     def test_empty_cni_directory(self):
-        with patch.object(state_collector, "_command_exists", return_value=True), patch.object(
-            state_collector, "_run_command", return_value=""
+        with patch.dict(os.environ, {}, clear=True), patch(
+            "state_collector.os.path.exists",
+            return_value=True,
+        ), patch(
+            "state_collector.os.path.isdir",
+            return_value=True,
+        ), patch(
+            "state_collector.os.listdir",
+            return_value=[],
         ):
             result = state_collector._detect_cni()
 
@@ -134,11 +227,18 @@ class TestCniDetection(unittest.TestCase):
         self.assertEqual(result["filenames"], [])
         self.assertEqual(result["selected_file"], "")
         self.assertEqual(result["confidence"], "low")
+        self.assertEqual(result["directory_status"], "readable_empty")
 
     def test_multiple_config_files_prefers_recognized_match(self):
-        listing = "00-loopback.conf\n10-flannel.conflist\n99-extra.conf\n"
-        with patch.object(state_collector, "_command_exists", return_value=True), patch.object(
-            state_collector, "_run_command", return_value=listing
+        with patch.dict(os.environ, {}, clear=True), patch(
+            "state_collector.os.path.exists",
+            return_value=True,
+        ), patch(
+            "state_collector.os.path.isdir",
+            return_value=True,
+        ), patch(
+            "state_collector.os.listdir",
+            return_value=["00-loopback.conf", "10-flannel.conflist", "99-extra.conf"],
         ):
             result = state_collector._detect_cni()
 
@@ -227,7 +327,7 @@ class TestCniDetection(unittest.TestCase):
             "_read_selected_cni_config",
             return_value='{"cniVersion": "0.3.1", "name": "calico"}',
         ):
-            state = state_collector.collect_state()
+            state = state_collector.collect_state(allow_host_evidence=True)
 
         self.assertEqual(state["summary"]["versions"]["cni"], "calico")
         self.assertEqual(state["summary"]["versions"]["cni_version"], "v3.30.0")
