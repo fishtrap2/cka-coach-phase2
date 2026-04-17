@@ -171,11 +171,28 @@ def summarize(state: dict) -> dict:
     cluster_footprint = cni_evidence.get("cluster_footprint", {}).get("summary", "cluster footprint not directly observed")
     policy_status = cni_evidence.get("policy_presence", {}).get("status", "unknown")
     cni_confidence = cni_evidence.get("confidence", "unknown")
+    node_level_cni = cni_evidence.get("node_level", {}).get("cni", "unknown")
+    cluster_level_cni = cni_evidence.get("cluster_level", {}).get("cni", "unknown")
+    reconciliation = cni_evidence.get("reconciliation", "unknown")
     policy_label = {
         "present": "present",
         "absent": "none detected",
         "unknown": "unknown",
     }.get(policy_status, policy_status)
+
+    cni_summary_text = (
+        f"CNI: {cni_name or 'unknown'} | confidence: {cni_confidence} | cluster footprint: {cluster_footprint} | capability: {capability_summary} | policy: {policy_label}"
+    )
+    if (
+        reconciliation == "single_source"
+        and node_level_cni not in {"", "unknown"}
+        and cluster_level_cni in {"", "unknown"}
+    ):
+        cni_summary_text = (
+            f"CNI: {cni_name or 'unknown'} | confidence: {cni_confidence} | "
+            f"cluster evidence missing, node config still indicates {node_level_cni} | "
+            f"capability: {capability_summary} | policy: {policy_label}"
+        )
 
     if kubelet_ok is True:
         kubelet_text = "kubelet running"
@@ -212,10 +229,7 @@ def summarize(state: dict) -> dict:
         ),
         "L4.1": (kubelet_text, kubelet_ok is True),
         "L4.2": ("kube-proxy / service routing", True),
-        "L4.3": (
-            f"CNI: {cni_name or 'unknown'} | confidence: {cni_confidence} | cluster footprint: {cluster_footprint} | capability: {capability_summary} | policy: {policy_label}",
-            True,
-        ),
+        "L4.3": (cni_summary_text, True),
         "L3": (containerd_text, containerd_ok is True),
         "L2": (runc_ver or "runc version unknown", True),
         "L1": (f"kernel {kernel_ver or 'unknown'}", True),
@@ -808,6 +822,15 @@ cni_name = state.get("summary", {}).get("versions", {}).get(
     "cni",
     state.get("versions", {}).get("cni", "unknown"),
 )
+cni_node_level = cni_evidence.get("node_level", {})
+cni_cluster_level = cni_evidence.get("cluster_level", {})
+cni_reconciliation = cni_evidence.get("reconciliation", "unknown")
+cni_partial_uninstall_warning = (
+    selected_key == "L4.3"
+    and cni_reconciliation == "single_source"
+    and cni_node_level.get("cni", "unknown") not in {"", "unknown"}
+    and cni_cluster_level.get("cni", "unknown") in {"", "unknown"}
+)
 
 status_label = "Unknown / limited visibility"
 if selected_status is True or selected_status == "healthy":
@@ -843,6 +866,15 @@ with st.container(border=True):
             st.write(f"Execution: {selected_layer['exec_type']}")
 
         st.caption(f"Suggested debug entry point: `{selected_layer['api']}`")
+        if cni_partial_uninstall_warning:
+            st.warning(
+                "Cluster-level components for this CNI are absent, but host/node CNI config still "
+                f"references `{cni_node_level.get('cni', 'unknown')}`. This may indicate a partial "
+                "uninstall, stale node configuration, or transitional state."
+            )
+            st.caption(
+                "Action hint: inspect `/etc/cni/net.d` and clean up or replace stale config before installing another CNI."
+            )
         if not cni_config_spec_ui["observed"]:
             st.caption(cni_config_spec_ui["note"])
     else:
