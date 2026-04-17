@@ -144,6 +144,19 @@ def summarize(state: dict) -> dict:
     default_pods = sum(1 for l in data_lines if l.startswith("default "))
     pending_pods = sum(1 for l in data_lines if " Pending " in f" {l} ")
     crashloop_pods = sum(1 for l in data_lines if "CrashLoopBackOff" in l)
+    operator_pods = []
+    for line in data_lines:
+        parts = line.split()
+        if len(parts) >= 2 and "operator" in parts[1].lower():
+            operator_pods.append(parts[1])
+
+    daemonsets_text = runtime.get("daemonsets", "")
+    daemonset_lines = [line for line in daemonsets_text.splitlines() if line.strip()]
+    daemonset_data_lines = daemonset_lines[1:] if len(daemonset_lines) > 1 else []
+    daemonset_names = [line.split()[0] for line in daemonset_data_lines if line.split()]
+    daemonset_count = len(daemonset_names)
+    daemonset_preview = ", ".join(daemonset_names[:3]) if daemonset_names else "none directly observed"
+    operator_preview = ", ".join(operator_pods[:3]) if operator_pods else "none directly observed"
 
     kubelet_ok = health.get("kubelet_ok", None)
     containerd_ok = health.get("containerd_ok", None)
@@ -188,8 +201,15 @@ def summarize(state: dict) -> dict:
         ),
         "L7": ("Desired state via API objects", True),
         "L6.5": (f"API server / etcd | {api_ver or 'unknown'}", True),
-        "L6": ("Operators / custom controllers", True),
-        "L5": ("kube-controller-manager", True),
+        "L6": (
+            f"Operator-style pods: {operator_preview}"
+            + (f" | count={len(operator_pods)}" if operator_pods else ""),
+            True,
+        ),
+        "L5": (
+            f"Core controllers / daemonsets: {daemonset_count} observed | {daemonset_preview}",
+            True,
+        ),
         "L4.1": (kubelet_text, kubelet_ok is True),
         "L4.2": ("kube-proxy / service routing", True),
         "L4.3": (
@@ -614,19 +634,19 @@ health = state.get("health", {})
 # These are the visual rows used in the dashboard table.
 # They are related to ELS, but are primarily UI metadata for display.
 layers = [
-    ("9", "Applications", "User-facing application logic", "application processes living inside containers", "user_process", "app specific", "L9"),
-    ("8", "Pods", "Pod abstraction wrapping one or more containers", "kubelet-managed containers on nodes", "abstraction/meta", "kubectl get pods -o wide", "L8"),
-    ("7", "K8S Objects", "Desired state definitions stored in API server", "Persistent state (etcd via kube-apiserver)", "data", "kubectl get <resource>", "L7"),
-    ("6.5", "K8S API Layer", "Kubernetes API server and etcd (cluster state store)", "control-plane node (containers or processes)", "long_running_daemon", "kubectl cluster-info", "L6.5"),
-    ("6", "Operators", "Custom controllers with domain-specific logic", "pods in cluster", "long_running_daemon", "kubectl get pods -n <operator-namespace>", "L6"),
-    ("5", "Controllers", "Core reconciliation loops", "kube-controller-manager static pod", "long_running_daemon", "kubectl get events", "L5"),
-    ("4.1", "kubelet", "Node-level control agent", "workers and control-plane nodes' systemd/PID1", "long_running_system_service", "systemctl status kubelet", "L4.1"),
-    ("4.2", "kube-proxy", "Service networking for Pods", "kube-system pod (or replaced by CNI dataplane)", "long_running_daemon", "iptables -L -n -v", "L4.2"),
-    ("4.3", "cni", "Container Network Interface & plugin", "short-lived execution on node to wire pod networking", "short_lived_executable", "ls /etc/cni/net.d/ ; ip route", "L4.3"),
-    ("3", "Container Runtime / CRI", "Node-level container management", "systemd service on node", "cri_daemon", "crictl", "L3"),
-    ("2", "OCI (runc)", "Low-level container executor", "invoked by CRI runtime", "short_lived_executable", "runc --version", "L2"),
-    ("1", "Kernel", "Namespaces, cgroups, networking", "guest OS inside provider VM", "persistent_state_machine", "ip / proc / uname -r", "L1"),
-    ("0", "VM/Infra", "Virtualized CPU, memory, network interfaces", "hypervisor-provided abstraction", "virtualization_layer", "lscpu ; lsblk", "L0"),
+    ("9", "Applications", "User-facing application logic such as app binaries, web servers, APIs, and background workers running inside containers.", "application processes living inside containers", "user_process", "app specific", "L9"),
+    ("8", "Pods", "Pod abstraction wrapping one or more containers, restart policy, IP identity, and scheduling placement on nodes.", "kubelet-managed containers on nodes", "abstraction/meta", "kubectl get pods -o wide", "L8"),
+    ("7", "K8S Objects", "Desired-state resources stored in the API server such as Deployments, Services, ConfigMaps, Secrets, and NetworkPolicies.", "Persistent state (etcd via kube-apiserver)", "data", "kubectl get <resource>", "L7"),
+    ("6.5", "K8S API Layer", "Kubernetes API server and etcd as the cluster state entrypoint, persistence layer, and control-plane contract boundary.", "control-plane node (containers or processes)", "long_running_daemon", "kubectl cluster-info", "L6.5"),
+    ("6", "Operators", "Custom controllers with domain-specific logic, often shipped by platforms like Cilium, Calico, databases, and observability stacks.", "pods in cluster", "long_running_daemon", "kubectl get pods -n <operator-namespace>", "L6"),
+    ("5", "Controllers", "Core reconciliation loops such as kube-controller-manager, plus examples like Deployments, ReplicaSets, Jobs, and DaemonSets being continuously reconciled.", "kube-controller-manager static pod", "long_running_daemon", "kubectl get events", "L5"),
+    ("4.1", "kubelet", "Node-level control agent that watches PodSpecs and makes sure containers, volumes, probes, and restarts happen on each node.", "workers and control-plane nodes' systemd/PID1", "long_running_system_service", "systemctl status kubelet", "L4.1"),
+    ("4.2", "kube-proxy", "Service networking and virtual IP routing for Pods, unless some of that behavior is replaced by the active CNI dataplane.", "kube-system pod (or replaced by CNI dataplane)", "long_running_daemon", "iptables -L -n -v", "L4.2"),
+    ("4.3", "cni", "Container Network Interface plugin and node networking glue that wires pod networking, interfaces, routes, and policy-capable dataplanes.", "short-lived execution on node to wire pod networking", "short_lived_executable", "ls /etc/cni/net.d/ ; ip route", "L4.3"),
+    ("3", "Container Runtime / CRI", "Node-level container management through CRI, handling image pulls, container lifecycle, and runtime coordination.", "systemd service on node", "cri_daemon", "crictl", "L3"),
+    ("2", "OCI (runc)", "Low-level OCI container executor invoked by the CRI runtime to create and start individual containers.", "invoked by CRI runtime", "short_lived_executable", "runc --version", "L2"),
+    ("1", "Kernel", "Linux namespaces, cgroups, networking, filesystems, and syscalls that ultimately enforce container isolation and connectivity.", "guest OS inside provider VM", "persistent_state_machine", "ip / proc / uname -r", "L1"),
+    ("0", "VM/Infra", "Virtualized CPU, memory, disks, and network interfaces provided by the underlying VM or infrastructure platform.", "hypervisor-provided abstraction", "virtualization_layer", "lscpu ; lsblk", "L0"),
 ]
 
 layer_options = [
