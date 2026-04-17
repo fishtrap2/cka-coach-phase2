@@ -599,6 +599,61 @@ class TestCniDetection(unittest.TestCase):
             "Kubernetes + Cilium policy features likely",
         )
 
+    def test_collect_state_marks_cilium_unknown_when_operator_remains_but_dataplane_daemonset_missing(self):
+        node_detection = {
+            "cni": "cilium",
+            "filenames": ["05-cilium.conflist"],
+            "selected_file": "05-cilium.conflist",
+            "confidence": "high",
+        }
+        cluster_detection = {
+            "cni": "cilium",
+            "matched_pods": ["cilium-operator-12345"],
+            "selected_pod": "cilium-operator-12345",
+            "confidence": "high",
+        }
+
+        def fake_safe_kubectl(command: str) -> str:
+            if command == "kubectl get daemonsets -n kube-system":
+                return (
+                    "NAME DESIRED CURRENT READY UP-TO-DATE AVAILABLE NODE SELECTOR AGE\n"
+                    "kube-proxy 2 2 2 2 2 kubernetes.io/os=linux 58d\n"
+                )
+            return ""
+
+        with patch.object(state_collector, "_safe_kubectl", side_effect=fake_safe_kubectl), patch.object(
+            state_collector, "_safe_systemctl", return_value=""
+        ), patch.object(state_collector, "_safe_crictl", return_value=""), patch.object(
+            state_collector, "_safe_ip", return_value=""
+        ), patch.object(
+            state_collector, "_run_command", return_value=""
+        ), patch.object(
+            state_collector, "_safe_kubectl_version_short", return_value=""
+        ), patch.object(
+            state_collector, "_safe_kubectl_version_json", return_value=""
+        ), patch.object(
+            state_collector, "_safe_uname", return_value=""
+        ), patch.object(
+            state_collector, "_safe_containerd_version", return_value=""
+        ), patch.object(
+            state_collector, "_safe_kubelet_version", return_value=""
+        ), patch.object(
+            state_collector, "_safe_runc_version", return_value=""
+        ), patch.object(
+            state_collector, "_detect_cni", return_value=node_detection
+        ), patch.object(
+            state_collector, "_detect_cni_from_pods", return_value=cluster_detection
+        ):
+            state = state_collector.collect_state()
+
+        self.assertEqual(state["summary"]["versions"]["cni"], "cilium")
+        self.assertEqual(state["evidence"]["cni"]["reconciliation"], "agree")
+        self.assertEqual(
+            state["evidence"]["cni"]["cluster_footprint"]["summary"],
+            "operator present",
+        )
+        self.assertEqual(state["health"]["cni_ok"], "unknown")
+
     def test_collect_state_marks_single_source_cni_as_unknown_health(self):
         node_detection = {
             "cni": "unknown",

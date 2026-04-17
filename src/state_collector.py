@@ -834,6 +834,7 @@ def _health_flags(
     cni_text = versions.get("cni", "").lower()
     cni_evidence = (evidence or {}).get("cni", {})
     cni_reconciliation = cni_evidence.get("reconciliation", "unknown")
+    cni_cluster_footprint = cni_evidence.get("cluster_footprint", {})
 
     pods_pending = "pending" in pods_text
     pods_crashloop = "crashloopbackoff" in pods_text
@@ -910,12 +911,34 @@ def _health_flags(
     kernel_ok = True if kernel_text.strip() else None
 
     # cni
+    expected_cni_daemonsets = {
+        "cilium": {"cilium"},
+        "calico": {"calico-node"},
+    }
+    observed_cni_daemonsets = {
+        ds.get("name", "")
+        for ds in cni_cluster_footprint.get("daemonsets", [])
+        if ds.get("name")
+    }
+    expected_daemonsets = expected_cni_daemonsets.get(cni_text, set())
+    daemonset_evidence_direct = "not directly observed" not in cni_cluster_footprint.get(
+        "summary",
+        "",
+    )
+    missing_expected_daemonset = bool(
+        daemonset_evidence_direct
+        and expected_daemonsets
+        and not (observed_cni_daemonsets & expected_daemonsets)
+    )
+
     if cni_text in {"", "unknown"}:
+        cni_ok = "unknown"
+    elif cni_reconciliation == "conflict":
+        cni_ok = "degraded"
+    elif missing_expected_daemonset:
         cni_ok = "unknown"
     elif cni_reconciliation == "agree":
         cni_ok = "healthy"
-    elif cni_reconciliation == "conflict":
-        cni_ok = "degraded"
     elif cni_reconciliation == "single_source":
         cni_ok = "unknown"
     else:
