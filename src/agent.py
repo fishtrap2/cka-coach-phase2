@@ -85,6 +85,7 @@ def normalize_collected_state(collected_state: dict) -> dict:
     cni_health = health.get("cni_ok", "unknown")
     capabilities = cni_evidence.get("capabilities", {})
     cluster_footprint = cni_evidence.get("cluster_footprint", {})
+    calico_runtime = cni_evidence.get("calico_runtime", {})
     policy_presence = cni_evidence.get("policy_presence", {})
     version = cni_evidence.get("version", {})
     config_spec_version = cni_evidence.get("config_spec_version", {})
@@ -112,9 +113,14 @@ def normalize_collected_state(collected_state: dict) -> dict:
         missing_or_unverified.append("CNI DaemonSet presence or readiness was not directly collected from cluster evidence.")
     if version.get("value", "unknown") == "unknown":
         missing_or_unverified.append("The CNI plugin version is not directly evidenced from a single trustworthy image tag.")
-    missing_or_unverified.append(
-        "CNI-specific health output from the plugin itself is still not directly verified from the provided context."
-    )
+    if cni_name == "calico" and calico_runtime.get("status") == "established":
+        missing_or_unverified.append(
+            "Direct Calico runtime evidence was collected from one calico-node pod, but it does not by itself prove identical BGP or health state on every node."
+        )
+    else:
+        missing_or_unverified.append(
+            "CNI-specific health output from the plugin itself is still not directly verified from the provided context."
+        )
     if cni_evidence.get("reconciliation", "unknown") == "conflict":
         missing_or_unverified.append(
             "Cluster-level and node-level signals conflict, so the result is a lower-certainty inference rather than a well-supported conclusion."
@@ -158,6 +164,13 @@ def normalize_collected_state(collected_state: dict) -> dict:
         f"operator present: {cluster_footprint.get('operator_present', False)}\n"
         f"daemonset count: {cluster_footprint.get('daemonset_count', 0)}\n"
         f"daemonsets: {json.dumps(cluster_footprint.get('daemonsets', []), indent=2)}\n\n"
+        "[calico runtime evidence]\n"
+        f"summary: {calico_runtime.get('summary', 'not applicable for current CNI')}\n"
+        f"status: {calico_runtime.get('status', 'unknown')}\n"
+        f"pod: {calico_runtime.get('pod', '') or '(none)'}\n"
+        f"bird ready: {calico_runtime.get('bird_ready', False)}\n"
+        f"established peers: {calico_runtime.get('established_peers', 0)}\n"
+        f"protocol lines: {json.dumps(calico_runtime.get('protocol_lines', []), indent=2)}\n\n"
         "[version evidence]\n"
         f"observed version: {version.get('value', 'unknown')}\n"
         f"source: {version.get('source', 'unknown')}\n"

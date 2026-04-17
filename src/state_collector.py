@@ -760,6 +760,102 @@ def _detect_cni_version_from_pod_images(
     }
 
 
+def _parse_calico_bird_protocols(output: str) -> Dict[str, Any]:
+    """
+    Parse direct Calico BIRD protocol output into a small health summary.
+    """
+    lower = output.lower()
+    if not output.strip() or "kubectl not installed" in lower:
+        return {
+            "status": "unknown",
+            "bird_ready": False,
+            "established_peers": 0,
+            "protocol_lines": [],
+            "summary": "direct Calico runtime evidence not collected",
+        }
+
+    protocol_lines = []
+    established_peers = 0
+    for line in output.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        if "bgp" in stripped.lower():
+            protocol_lines.append(stripped)
+            if "Established" in stripped:
+                established_peers += 1
+
+    bird_ready = "bird" in lower and "ready" in lower
+    if established_peers > 0:
+        return {
+            "status": "established",
+            "bird_ready": bird_ready,
+            "established_peers": established_peers,
+            "protocol_lines": protocol_lines,
+            "summary": f"BGP peers established={established_peers}",
+        }
+    if bird_ready:
+        return {
+            "status": "bird_ready_no_established_peer",
+            "bird_ready": True,
+            "established_peers": 0,
+            "protocol_lines": protocol_lines,
+            "summary": "BIRD is ready but no established BGP peers were observed",
+        }
+
+    return {
+        "status": "unknown",
+        "bird_ready": False,
+        "established_peers": 0,
+        "protocol_lines": protocol_lines,
+        "summary": "direct Calico runtime evidence not collected",
+    }
+
+
+def _collect_calico_runtime_evidence(cluster_level: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Collect direct Calico runtime evidence from a calico-node pod when available.
+    """
+    if cluster_level.get("cni", "unknown") != "calico":
+        return {
+            "status": "not_applicable",
+            "pod": "",
+            "bird_ready": False,
+            "established_peers": 0,
+            "protocol_lines": [],
+            "summary": "not applicable for current CNI",
+            "source": "not_applicable",
+            "raw_output": "",
+        }
+
+    calico_node_pod = next(
+        (pod for pod in cluster_level.get("matched_pods", []) if "calico-node" in pod.lower()),
+        "",
+    )
+    if not calico_node_pod:
+        return {
+            "status": "unknown",
+            "pod": "",
+            "bird_ready": False,
+            "established_peers": 0,
+            "protocol_lines": [],
+            "summary": "no calico-node pod was available for direct runtime evidence",
+            "source": "no_calico_node_pod",
+            "raw_output": "",
+        }
+
+    output = _safe_kubectl(
+        f"kubectl -n kube-system exec {calico_node_pod} -- birdcl show protocols"
+    )
+    parsed = _parse_calico_bird_protocols(output)
+    return {
+        **parsed,
+        "pod": calico_node_pod,
+        "source": "kubectl_exec_birdcl",
+        "raw_output": output,
+    }
+
+
 def _detect_cni_config_spec_version(
     config_content: str,
     selected_file: str,
@@ -883,6 +979,7 @@ def _health_flags(
     cni_evidence = (evidence or {}).get("cni", {})
     cni_reconciliation = cni_evidence.get("reconciliation", "unknown")
     cni_cluster_footprint = cni_evidence.get("cluster_footprint", {})
+    calico_runtime = cni_evidence.get("calico_runtime", {})
     nodes_ready_now = _all_nodes_ready(runtime.get("nodes", ""))
 
     pods_pending = "pending" in pods_text
@@ -1010,6 +1107,8 @@ def _health_flags(
         cni_ok = "unknown"
     elif cni_reconciliation == "conflict":
         cni_ok = "degraded"
+    elif cni_text == "calico" and calico_runtime.get("status") == "established":
+        cni_ok = "healthy"
     elif missing_expected_daemonset:
         cni_ok = "unknown"
     elif cni_reconciliation == "agree":
@@ -1118,6 +1217,7 @@ def collect_state(allow_host_evidence: bool = False) -> Dict[str, Any]:
         cluster_cni_detection,
         runtime.get("daemonsets", ""),
     )
+    calico_runtime = _collect_calico_runtime_evidence(cluster_cni_detection)
     cni_version = _detect_cni_version_from_pod_images(
         combined_cni_detection.get("cni", "unknown"),
         cluster_cni_detection,
@@ -1163,6 +1263,7 @@ def collect_state(allow_host_evidence: bool = False) -> Dict[str, Any]:
             "reconciliation": combined_cni_detection.get("reconciliation", "unknown"),
             "capabilities": capabilities,
             "cluster_footprint": cluster_footprint,
+            "calico_runtime": calico_runtime,
             "policy_presence": policy_presence,
             "version": cni_version,
             "config_spec_version": cni_config_spec_version,

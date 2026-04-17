@@ -289,6 +289,7 @@ def format_cni_detection_evidence(state: dict) -> str:
     cluster_level = detection.get("cluster_level", {})
     capabilities = detection.get("capabilities", {})
     cluster_footprint = detection.get("cluster_footprint", {})
+    calico_runtime = detection.get("calico_runtime", {})
     policy_presence = detection.get("policy_presence", {})
     version = detection.get("version", {})
     config_spec_version = detection.get("config_spec_version", {})
@@ -346,6 +347,13 @@ def format_cni_detection_evidence(state: dict) -> str:
         f"operator present: {cluster_footprint.get('operator_present', False)}\n"
         f"daemonset count: {cluster_footprint.get('daemonset_count', 0)}\n"
         f"daemonsets: {json.dumps(cluster_footprint.get('daemonsets', []), indent=2)}\n\n"
+        "[calico runtime evidence]\n"
+        f"summary: {calico_runtime.get('summary', 'not applicable for current CNI')}\n"
+        f"status: {calico_runtime.get('status', 'unknown')}\n"
+        f"pod: {calico_runtime.get('pod', '') or '(none)'}\n"
+        f"bird ready: {calico_runtime.get('bird_ready', False)}\n"
+        f"established peers: {calico_runtime.get('established_peers', 0)}\n"
+        f"protocol lines: {json.dumps(calico_runtime.get('protocol_lines', []), indent=2)}\n\n"
         "[version evidence]\n"
         f"observed version: {version.get('value', 'unknown')}\n"
         f"source: {version.get('source', 'unknown')}\n"

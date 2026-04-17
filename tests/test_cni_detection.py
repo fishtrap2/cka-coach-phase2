@@ -11,6 +11,41 @@ import state_collector
 
 
 class TestCniDetection(unittest.TestCase):
+    def test_parse_calico_bird_protocols_established(self):
+        output = (
+            'Defaulted container "calico-node" out of: calico-node, install-cni (init)\n'
+            "BIRD v0.3.3+birdv1.6.8 ready.\n"
+            "name     proto    table    state  since       info\n"
+            "Mesh_10_2_0_3 BGP      master   up     16:03:24    Established\n"
+        )
+
+        result = state_collector._parse_calico_bird_protocols(output)
+
+        self.assertEqual(result["status"], "established")
+        self.assertTrue(result["bird_ready"])
+        self.assertEqual(result["established_peers"], 1)
+        self.assertEqual(result["summary"], "BGP peers established=1")
+
+    def test_collect_calico_runtime_evidence_from_bird_exec(self):
+        cluster_detection = {
+            "cni": "calico",
+            "matched_pods": ["calico-node-46g9k", "calico-kube-controllers-12345"],
+            "selected_pod": "calico-node-46g9k",
+            "confidence": "high",
+        }
+        bird_output = (
+            "BIRD v0.3.3+birdv1.6.8 ready.\n"
+            "Mesh_10_2_0_3 BGP      master   up     16:03:24    Established\n"
+        )
+
+        with patch.object(state_collector, "_safe_kubectl", return_value=bird_output):
+            result = state_collector._collect_calico_runtime_evidence(cluster_detection)
+
+        self.assertEqual(result["status"], "established")
+        self.assertEqual(result["pod"], "calico-node-46g9k")
+        self.assertEqual(result["source"], "kubectl_exec_birdcl")
+        self.assertEqual(result["established_peers"], 1)
+
     def test_kubelet_health_ignores_cleanup_noise_when_service_and_nodes_are_healthy(self):
         runtime = {
             "pods": (
@@ -481,6 +516,19 @@ class TestCniDetection(unittest.TestCase):
             state_collector,
             "_read_selected_cni_config",
             return_value='{"cniVersion": "0.3.1", "name": "calico"}',
+        ), patch.object(
+            state_collector,
+            "_collect_calico_runtime_evidence",
+            return_value={
+                "status": "established",
+                "pod": "calico-node-abcde",
+                "bird_ready": True,
+                "established_peers": 1,
+                "protocol_lines": ["Mesh_10_2_0_3 BGP master up Established"],
+                "summary": "BGP peers established=1",
+                "source": "kubectl_exec_birdcl",
+                "raw_output": "BIRD ready",
+            },
         ):
             state = state_collector.collect_state(allow_host_evidence=True)
 
@@ -500,6 +548,7 @@ class TestCniDetection(unittest.TestCase):
         )
         self.assertEqual(state["evidence"]["cni"]["policy_presence"]["status"], "unknown")
         self.assertEqual(state["evidence"]["cni"]["version"]["value"], "v3.30.0")
+        self.assertEqual(state["evidence"]["cni"]["calico_runtime"]["status"], "established")
         self.assertEqual(state["evidence"]["cni"]["config_spec_version"]["value"], "0.3.1")
         self.assertIn('"cniVersion": "0.3.1"', state["evidence"]["cni"]["config_content"])
         self.assertEqual(
@@ -588,13 +637,26 @@ class TestCniDetection(unittest.TestCase):
             state_collector, "_detect_cni", return_value=node_detection
         ), patch.object(
             state_collector, "_detect_cni_from_pods", return_value=cluster_detection
+        ), patch.object(
+            state_collector,
+            "_collect_calico_runtime_evidence",
+            return_value={
+                "status": "established",
+                "pod": "calico-node-abcde",
+                "bird_ready": True,
+                "established_peers": 1,
+                "protocol_lines": ["Mesh_10_2_0_3 BGP master up Established"],
+                "summary": "BGP peers established=1",
+                "source": "kubectl_exec_birdcl",
+                "raw_output": "BIRD ready",
+            },
         ):
             state = state_collector.collect_state()
 
         self.assertEqual(state["summary"]["versions"]["cni"], "calico")
         self.assertEqual(state["evidence"]["cni"]["confidence"], "medium")
         self.assertEqual(state["evidence"]["cni"]["reconciliation"], "single_source")
-        self.assertEqual(state["health"]["cni_ok"], "unknown")
+        self.assertEqual(state["health"]["cni_ok"], "healthy")
         self.assertEqual(state["evidence"]["cni"]["capabilities"]["network_policy"], True)
 
     def test_collect_state_preserves_cilium_capability_behavior(self):
@@ -692,6 +754,19 @@ class TestCniDetection(unittest.TestCase):
             state_collector, "_detect_cni", return_value=node_detection
         ), patch.object(
             state_collector, "_detect_cni_from_pods", return_value=cluster_detection
+        ), patch.object(
+            state_collector,
+            "_collect_calico_runtime_evidence",
+            return_value={
+                "status": "established",
+                "pod": "calico-node-abcde",
+                "bird_ready": True,
+                "established_peers": 1,
+                "protocol_lines": ["Mesh_10_2_0_3 BGP master up Established"],
+                "summary": "BGP peers established=1",
+                "source": "kubectl_exec_birdcl",
+                "raw_output": "BIRD ready",
+            },
         ):
             state = state_collector.collect_state()
 
