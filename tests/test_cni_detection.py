@@ -172,6 +172,27 @@ class TestCniDetection(unittest.TestCase):
         self.assertEqual(result["value"], "unknown")
         self.assertEqual(result["source"], "no_single_trustworthy_image_tag")
 
+    def test_detect_cni_from_generic_filename_uses_config_content_for_calico(self):
+        with patch.dict(os.environ, {}, clear=True), patch(
+            "state_collector.os.path.exists",
+            return_value=True,
+        ), patch(
+            "state_collector.os.path.isdir",
+            return_value=True,
+        ), patch(
+            "state_collector.os.listdir",
+            return_value=["10-generic.conflist"],
+        ), patch.object(
+            state_collector,
+            "_read_selected_cni_config",
+            return_value='{"name": "k8s-pod-network", "plugins": [{"type": "calico"}]}',
+        ):
+            result = state_collector._detect_cni()
+
+        self.assertEqual(result["cni"], "calico")
+        self.assertEqual(result["selected_file"], "10-generic.conflist")
+        self.assertEqual(result["confidence"], "high")
+
     def test_recognized_cni_filename(self):
         with patch.dict(os.environ, {}, clear=True), patch(
             "state_collector.os.path.exists",
@@ -266,6 +287,38 @@ class TestCniDetection(unittest.TestCase):
             ["cilium-abcde", "cilium-operator-12345"],
         )
 
+    def test_detect_cni_from_pods_recognizes_explicit_calico_signals(self):
+        pods_text = (
+            "NAMESPACE NAME READY STATUS RESTARTS AGE IP NODE NOMINATED NODE READINESS GATES\n"
+            "kube-system calico-node-abcde 1/1 Running 0 1h 10.0.0.1 node1 <none> <none>\n"
+            "kube-system calico-kube-controllers-12345 1/1 Running 0 1h 10.0.0.2 node1 <none> <none>\n"
+        )
+
+        result = state_collector._detect_cni_from_pods(pods_text)
+
+        self.assertEqual(result["cni"], "calico")
+        self.assertEqual(result["selected_pod"], "calico-node-abcde")
+        self.assertEqual(result["confidence"], "high")
+        self.assertEqual(
+            result["matched_pods"],
+            ["calico-node-abcde", "calico-kube-controllers-12345"],
+        )
+
+    def test_infer_cni_capabilities_for_calico(self):
+        result = state_collector._infer_cni_capabilities("calico")
+
+        self.assertEqual(result["network_policy"], True)
+        self.assertEqual(result["policy_model"], "Kubernetes + Calico extensions")
+        self.assertEqual(result["inference_basis"], "detected_cni_name")
+
+    def test_infer_cni_capabilities_preserves_generic_default_behavior(self):
+        result = state_collector._infer_cni_capabilities("10-containerd-net.conflist")
+
+        self.assertEqual(result["summary"], "unknown")
+        self.assertIsNone(result["network_policy"])
+        self.assertEqual(result["policy_model"], "unknown")
+        self.assertEqual(result["inference_basis"], "insufficient_cni_evidence")
+
     def test_network_policy_summary_detects_present_policies(self):
         policies_text = (
             "NAMESPACE NAME POD-SELECTOR AGE\n"
@@ -277,6 +330,59 @@ class TestCniDetection(unittest.TestCase):
         self.assertEqual(result["status"], "present")
         self.assertEqual(result["count"], 2)
         self.assertEqual(result["namespaces"], ["default", "payments"])
+
+    def test_summarize_cni_cluster_footprint_for_cilium(self):
+        cluster_detection = {
+            "cni": "cilium",
+            "matched_pods": [
+                "cilium-envoy-fnqpp",
+                "cilium-gqtd7",
+                "cilium-operator-69bcbb6469-d4qkp",
+            ],
+            "selected_pod": "cilium-envoy-fnqpp",
+            "confidence": "high",
+        }
+        daemonsets_text = (
+            "NAME DESIRED CURRENT READY UP-TO-DATE AVAILABLE NODE SELECTOR AGE\n"
+            "cilium 2 2 2 2 2 kubernetes.io/os=linux 58d\n"
+            "cilium-envoy 2 2 2 2 2 kubernetes.io/os=linux 58d\n"
+            "kube-proxy 2 2 2 2 2 kubernetes.io/os=linux 58d\n"
+        )
+
+        result = state_collector._summarize_cni_cluster_footprint(
+            "cilium",
+            cluster_detection,
+            daemonsets_text,
+        )
+
+        self.assertTrue(result["operator_present"])
+        self.assertEqual(result["daemonset_count"], 2)
+        self.assertEqual(result["summary"], "operator present, daemonsets=2")
+
+    def test_summarize_cni_cluster_footprint_for_calico(self):
+        cluster_detection = {
+            "cni": "calico",
+            "matched_pods": [
+                "calico-node-abcde",
+                "calico-kube-controllers-12345",
+            ],
+            "selected_pod": "calico-node-abcde",
+            "confidence": "high",
+        }
+        daemonsets_text = (
+            "NAME DESIRED CURRENT READY UP-TO-DATE AVAILABLE NODE SELECTOR AGE\n"
+            "calico-node 2 2 2 2 2 kubernetes.io/os=linux 20d\n"
+        )
+
+        result = state_collector._summarize_cni_cluster_footprint(
+            "calico",
+            cluster_detection,
+            daemonsets_text,
+        )
+
+        self.assertFalse(result["operator_present"])
+        self.assertEqual(result["daemonset_count"], 1)
+        self.assertEqual(result["summary"], "daemonsets=1")
 
     def test_collect_state_reconciles_agreeing_sources_as_healthy(self):
         node_detection = {
@@ -337,6 +443,12 @@ class TestCniDetection(unittest.TestCase):
         self.assertEqual(state["evidence"]["cni"]["confidence"], "high")
         self.assertEqual(state["evidence"]["cni"]["reconciliation"], "agree")
         self.assertEqual(state["evidence"]["cni"]["capabilities"]["summary"], "policy-capable dataplane likely")
+        self.assertEqual(state["evidence"]["cni"]["capabilities"]["network_policy"], True)
+        self.assertEqual(state["evidence"]["cni"]["capabilities"]["policy_model"], "Kubernetes + Calico extensions")
+        self.assertEqual(
+            state["evidence"]["cni"]["cluster_footprint"]["summary"],
+            "pods present; daemonset footprint not directly observed",
+        )
         self.assertEqual(state["evidence"]["cni"]["policy_presence"]["status"], "unknown")
         self.assertEqual(state["evidence"]["cni"]["version"]["value"], "v3.30.0")
         self.assertEqual(state["evidence"]["cni"]["config_spec_version"]["value"], "0.3.1")
@@ -390,6 +502,102 @@ class TestCniDetection(unittest.TestCase):
         self.assertEqual(state["evidence"]["cni"]["confidence"], "medium")
         self.assertEqual(state["evidence"]["cni"]["reconciliation"], "conflict")
         self.assertEqual(state["health"]["cni_ok"], "degraded")
+
+    def test_collect_state_marks_partial_calico_evidence_as_unknown_health(self):
+        node_detection = {
+            "cni": "unknown",
+            "filenames": [],
+            "selected_file": "",
+            "confidence": "low",
+        }
+        cluster_detection = {
+            "cni": "calico",
+            "matched_pods": ["calico-node-abcde", "calico-kube-controllers-12345"],
+            "selected_pod": "calico-node-abcde",
+            "confidence": "high",
+        }
+
+        with patch.object(state_collector, "_safe_kubectl", return_value=""), patch.object(
+            state_collector, "_safe_systemctl", return_value=""
+        ), patch.object(state_collector, "_safe_crictl", return_value=""), patch.object(
+            state_collector, "_safe_ip", return_value=""
+        ), patch.object(
+            state_collector, "_run_command", return_value=""
+        ), patch.object(
+            state_collector, "_safe_kubectl_version_short", return_value=""
+        ), patch.object(
+            state_collector, "_safe_kubectl_version_json", return_value=""
+        ), patch.object(
+            state_collector, "_safe_uname", return_value=""
+        ), patch.object(
+            state_collector, "_safe_containerd_version", return_value=""
+        ), patch.object(
+            state_collector, "_safe_kubelet_version", return_value=""
+        ), patch.object(
+            state_collector, "_safe_runc_version", return_value=""
+        ), patch.object(
+            state_collector, "_detect_cni", return_value=node_detection
+        ), patch.object(
+            state_collector, "_detect_cni_from_pods", return_value=cluster_detection
+        ):
+            state = state_collector.collect_state()
+
+        self.assertEqual(state["summary"]["versions"]["cni"], "calico")
+        self.assertEqual(state["evidence"]["cni"]["confidence"], "medium")
+        self.assertEqual(state["evidence"]["cni"]["reconciliation"], "single_source")
+        self.assertEqual(state["health"]["cni_ok"], "unknown")
+        self.assertEqual(state["evidence"]["cni"]["capabilities"]["network_policy"], True)
+
+    def test_collect_state_preserves_cilium_capability_behavior(self):
+        node_detection = {
+            "cni": "cilium",
+            "filenames": ["05-cilium.conflist"],
+            "selected_file": "05-cilium.conflist",
+            "confidence": "high",
+        }
+        cluster_detection = {
+            "cni": "cilium",
+            "matched_pods": ["cilium-abcde", "cilium-operator-12345"],
+            "selected_pod": "cilium-abcde",
+            "confidence": "high",
+        }
+
+        with patch.object(state_collector, "_safe_kubectl", return_value=""), patch.object(
+            state_collector, "_safe_systemctl", return_value=""
+        ), patch.object(state_collector, "_safe_crictl", return_value=""), patch.object(
+            state_collector, "_safe_ip", return_value=""
+        ), patch.object(
+            state_collector, "_run_command", return_value=""
+        ), patch.object(
+            state_collector, "_safe_kubectl_version_short", return_value=""
+        ), patch.object(
+            state_collector, "_safe_kubectl_version_json", return_value=""
+        ), patch.object(
+            state_collector, "_safe_uname", return_value=""
+        ), patch.object(
+            state_collector, "_safe_containerd_version", return_value=""
+        ), patch.object(
+            state_collector, "_safe_kubelet_version", return_value=""
+        ), patch.object(
+            state_collector, "_safe_runc_version", return_value=""
+        ), patch.object(
+            state_collector, "_detect_cni", return_value=node_detection
+        ), patch.object(
+            state_collector, "_detect_cni_from_pods", return_value=cluster_detection
+        ):
+            state = state_collector.collect_state()
+
+        self.assertEqual(state["summary"]["versions"]["cni"], "cilium")
+        self.assertEqual(state["evidence"]["cni"]["confidence"], "high")
+        self.assertEqual(state["evidence"]["cni"]["capabilities"]["network_policy"], True)
+        self.assertEqual(
+            state["evidence"]["cni"]["cluster_footprint"]["summary"],
+            "pods present; daemonset footprint not directly observed",
+        )
+        self.assertEqual(
+            state["evidence"]["cni"]["capabilities"]["policy_model"],
+            "Kubernetes + Cilium policy features likely",
+        )
 
     def test_collect_state_marks_single_source_cni_as_unknown_health(self):
         node_detection = {

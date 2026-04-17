@@ -206,6 +206,43 @@ def _select_cni_match(filenames: List[str]) -> Dict[str, str]:
     }
 
 
+def _select_cni_match_from_content(config_content: str, selected_file: str) -> Dict[str, str]:
+    """
+    Choose a best-effort CNI signal from readable config content.
+
+    This is intentionally lightweight and only upgrades detection when the
+    config content itself clearly points to a known plugin.
+    """
+    if not config_content.strip():
+        return {
+            "cni": "unknown",
+            "selected_file": selected_file,
+            "confidence": "low",
+        }
+
+    lower = config_content.lower()
+    explicit_patterns = [
+        ("cilium", "cilium"),
+        ("calico", "calico"),
+        ("flannel", "flannel"),
+        ("weave", "weave"),
+    ]
+
+    for pattern, cni_name in explicit_patterns:
+        if pattern in lower:
+            return {
+                "cni": cni_name,
+                "selected_file": selected_file,
+                "confidence": "high",
+            }
+
+    return {
+        "cni": "unknown",
+        "selected_file": selected_file,
+        "confidence": "low",
+    }
+
+
 def _resolve_cni_config_dir(allow_host_evidence: bool = False) -> Dict[str, Any]:
     """
     Resolve which CNI config directory cka-coach should inspect.
@@ -300,6 +337,29 @@ def _detect_cni(allow_host_evidence: bool = False) -> Dict[str, Any]:
         }
 
     result = _select_cni_match(filenames)
+    if result.get("cni", "unknown") not in {"unknown"} and result.get("confidence") == "high":
+        result["filenames"] = filenames
+        result["config_dir"] = inspection.get("directory", DEFAULT_CNI_CONFIG_DIR)
+        result["config_dir_source"] = inspection.get("directory_source", "default")
+        result["directory_status"] = inspection.get("directory_status", "readable")
+        result["host_evidence_enabled"] = inspection.get("host_evidence_enabled", False)
+        result["configured_override_ignored"] = inspection.get("configured_override_ignored", False)
+        return result
+
+    for filename in filenames:
+        lower = filename.lower()
+        if not (lower.endswith(".conf") or lower.endswith(".conflist")):
+            continue
+
+        config_content = _read_selected_cni_config(
+            filename,
+            inspection.get("directory", DEFAULT_CNI_CONFIG_DIR),
+        )
+        content_match = _select_cni_match_from_content(config_content, filename)
+        if content_match.get("cni", "unknown") != "unknown":
+            result = content_match
+            break
+
     result["filenames"] = filenames
     result["config_dir"] = inspection.get("directory", DEFAULT_CNI_CONFIG_DIR)
     result["config_dir_source"] = inspection.get("directory_source", "default")
@@ -344,11 +404,11 @@ def _detect_cni_from_pods(pods_text: str) -> Dict[str, Any]:
         return _empty_pod_cni_detection()
 
     recognized_patterns = [
-        ("cilium", "cilium"),
-        ("calico", "calico"),
-        ("flannel", "flannel"),
-        ("weave", "weave"),
-        ("canal", "canal"),
+        ("cilium", ["cilium", "cilium-envoy", "cilium-operator"]),
+        ("calico", ["calico-node", "calico-kube-controllers", "calico-typha", "calico-apiserver", "calico"]),
+        ("flannel", ["flannel"]),
+        ("weave", ["weave"]),
+        ("canal", ["canal"]),
     ]
 
     best_match = {
@@ -358,8 +418,12 @@ def _detect_cni_from_pods(pods_text: str) -> Dict[str, Any]:
         "confidence": "low",
     }
 
-    for pattern, cni_name in recognized_patterns:
-        matched = [pod for pod in kube_system_pods if pattern in pod.lower()]
+    for cni_name, patterns in recognized_patterns:
+        matched = [
+            pod
+            for pod in kube_system_pods
+            if any(pattern in pod.lower() for pattern in patterns)
+        ]
         if len(matched) > len(best_match["matched_pods"]):
             best_match = {
                 "cni": cni_name,
@@ -454,26 +518,36 @@ def _infer_cni_capabilities(cni_name: str) -> Dict[str, str]:
             "summary": "policy-capable dataplane likely",
             "policy_support": "platform likely supports network policy features",
             "observability": "enhanced platform telemetry may be available",
+            "network_policy": True,
+            "policy_model": "Kubernetes + Cilium policy features likely",
         },
         "calico": {
             "summary": "policy-capable dataplane likely",
             "policy_support": "platform likely supports network policy features",
             "observability": "platform telemetry may be available",
+            "network_policy": True,
+            "policy_model": "Kubernetes + Calico extensions",
         },
         "canal": {
             "summary": "policy-capable combined deployment likely",
             "policy_support": "platform likely supports network policy features",
             "observability": "platform-dependent telemetry may be available",
+            "network_policy": True,
+            "policy_model": "Kubernetes + Calico extensions likely",
         },
         "flannel": {
             "summary": "basic pod networking dataplane inferred",
             "policy_support": "network policy support is not indicated by current detection alone",
             "observability": "basic networking visibility inferred",
+            "network_policy": None,
+            "policy_model": "unknown",
         },
         "weave": {
             "summary": "overlay networking dataplane inferred",
             "policy_support": "network policy support may exist but is not verified from current detection alone",
             "observability": "basic platform visibility inferred",
+            "network_policy": None,
+            "policy_model": "unknown",
         },
     }
 
@@ -488,6 +562,8 @@ def _infer_cni_capabilities(cni_name: str) -> Dict[str, str]:
         "summary": "unknown",
         "policy_support": "unknown",
         "observability": "unknown",
+        "network_policy": None,
+        "policy_model": "unknown",
         "inference_basis": "insufficient_cni_evidence",
     }
 
@@ -520,6 +596,66 @@ def _summarize_network_policy_presence(policies_text: str) -> Dict[str, Any]:
         "count": len(data_lines),
         "namespaces": namespaces,
     }
+
+
+def _summarize_cni_cluster_footprint(
+    cni_name: str,
+    cluster_level: Dict[str, Any],
+    daemonsets_text: str,
+) -> Dict[str, Any]:
+    """
+    Summarize a small auditable cluster-side footprint for the detected CNI.
+    """
+    matched_pods = cluster_level.get("matched_pods", [])
+    operator_present = any("operator" in pod.lower() for pod in matched_pods)
+
+    result = {
+        "operator_present": operator_present,
+        "daemonset_count": 0,
+        "daemonsets": [],
+        "summary": "cluster footprint not directly observed",
+    }
+
+    if cni_name in {"", "unknown"}:
+        return result
+
+    if not daemonsets_text.strip() or "kubectl not installed" in daemonsets_text.lower():
+        if matched_pods:
+            result["summary"] = "pods present; daemonset footprint not directly observed"
+        return result
+
+    lines = [line for line in daemonsets_text.splitlines() if line.strip()]
+    data_lines = lines[1:] if len(lines) > 1 else []
+    matching_daemonsets = []
+    for line in data_lines:
+        parts = line.split()
+        if len(parts) < 6:
+            continue
+        ds_name = parts[0]
+        if cni_name not in ds_name.lower():
+            continue
+        matching_daemonsets.append({
+            "name": ds_name,
+            "desired": parts[1],
+            "ready": parts[3],
+            "available": parts[5],
+        })
+
+    result["daemonset_count"] = len(matching_daemonsets)
+    result["daemonsets"] = matching_daemonsets
+
+    summary_bits = []
+    if operator_present:
+        summary_bits.append("operator present")
+    if matching_daemonsets:
+        summary_bits.append(f"daemonsets={len(matching_daemonsets)}")
+
+    if summary_bits:
+        result["summary"] = ", ".join(summary_bits)
+    elif matched_pods:
+        result["summary"] = "pods present; no matching daemonsets observed"
+
+    return result
 
 
 def _build_cni_migration_note(
@@ -857,6 +993,9 @@ def collect_state(allow_host_evidence: bool = False) -> Dict[str, Any]:
         # cluster policy objects
         "network_policies": _safe_kubectl("kubectl get networkpolicy -A"),
 
+        # cluster daemonsets for CNI footprint summaries
+        "daemonsets": _safe_kubectl("kubectl get daemonsets -n kube-system"),
+
         # detailed kube-system pod data used for direct image-tag evidence
         "kube_system_pods_json": _safe_kubectl("kubectl get pods -n kube-system -o json"),
     }
@@ -874,6 +1013,11 @@ def collect_state(allow_host_evidence: bool = False) -> Dict[str, Any]:
     )
     policy_presence = _summarize_network_policy_presence(runtime.get("network_policies", ""))
     capabilities = _infer_cni_capabilities(combined_cni_detection.get("cni", "unknown"))
+    cluster_footprint = _summarize_cni_cluster_footprint(
+        combined_cni_detection.get("cni", "unknown"),
+        cluster_cni_detection,
+        runtime.get("daemonsets", ""),
+    )
     cni_version = _detect_cni_version_from_pod_images(
         combined_cni_detection.get("cni", "unknown"),
         cluster_cni_detection,
@@ -918,6 +1062,7 @@ def collect_state(allow_host_evidence: bool = False) -> Dict[str, Any]:
             "confidence": combined_cni_detection.get("confidence", "low"),
             "reconciliation": combined_cni_detection.get("reconciliation", "unknown"),
             "capabilities": capabilities,
+            "cluster_footprint": cluster_footprint,
             "policy_presence": policy_presence,
             "version": cni_version,
             "config_spec_version": cni_config_spec_version,

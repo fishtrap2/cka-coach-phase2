@@ -83,6 +83,7 @@ def normalize_collected_state(collected_state: dict) -> dict:
     cni_name = summary_versions.get("cni", versions.get("cni", "")) or "unknown"
     cni_health = health.get("cni_ok", "unknown")
     capabilities = cni_evidence.get("capabilities", {})
+    cluster_footprint = cni_evidence.get("cluster_footprint", {})
     policy_presence = cni_evidence.get("policy_presence", {})
     version = cni_evidence.get("version", {})
     config_spec_version = cni_evidence.get("config_spec_version", {})
@@ -134,9 +135,16 @@ def normalize_collected_state(collected_state: dict) -> dict:
         f"{cni_filename_text}\n\n"
         "[capability inference]\n"
         f"summary: {capabilities.get('summary', 'unknown')}\n"
+        f"network policy: {capabilities.get('network_policy', 'unknown')}\n"
+        f"policy model: {capabilities.get('policy_model', 'unknown')}\n"
         f"policy support: {capabilities.get('policy_support', 'unknown')}\n"
         f"observability: {capabilities.get('observability', 'unknown')}\n"
         f"inference basis: {capabilities.get('inference_basis', 'unknown')}\n\n"
+        "[cluster footprint]\n"
+        f"summary: {cluster_footprint.get('summary', 'cluster footprint not directly observed')}\n"
+        f"operator present: {cluster_footprint.get('operator_present', False)}\n"
+        f"daemonset count: {cluster_footprint.get('daemonset_count', 0)}\n"
+        f"daemonsets: {json.dumps(cluster_footprint.get('daemonsets', []), indent=2)}\n\n"
         "[version evidence]\n"
         f"observed version: {version.get('value', 'unknown')}\n"
         f"source: {version.get('source', 'unknown')}\n"
