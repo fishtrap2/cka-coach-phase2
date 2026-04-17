@@ -648,6 +648,75 @@ class TestCniDetection(unittest.TestCase):
         self.assertEqual(state["evidence"]["cni"]["reconciliation"], "conflict")
         self.assertEqual(state["health"]["cni_ok"], "degraded")
 
+    def test_collect_state_treats_env_override_stale_cni_conflict_as_unknown_not_degraded(self):
+        node_detection = {
+            "cni": "cilium",
+            "filenames": ["05-cilium.conflist"],
+            "selected_file": "05-cilium.conflist",
+            "confidence": "high",
+            "config_dir_source": "env_override",
+            "config_dir": "/home/student/cni-config",
+            "directory_status": "readable",
+            "host_evidence_enabled": True,
+            "configured_override_ignored": False,
+        }
+        cluster_detection = {
+            "cni": "calico",
+            "matched_pods": ["calico-node-46g9k", "calico-kube-controllers-12345"],
+            "selected_pod": "calico-node-46g9k",
+            "confidence": "high",
+        }
+
+        def fake_safe_kubectl(command: str) -> str:
+            if command == "kubectl get daemonsets -n kube-system":
+                return (
+                    "NAME DESIRED CURRENT READY UP-TO-DATE AVAILABLE NODE SELECTOR AGE\n"
+                    "calico-node 2 2 2 2 2 kubernetes.io/os=linux 58d\n"
+                )
+            return ""
+
+        with patch.object(state_collector, "_safe_kubectl", side_effect=fake_safe_kubectl), patch.object(
+            state_collector, "_safe_systemctl", return_value=""
+        ), patch.object(state_collector, "_safe_crictl", return_value=""), patch.object(
+            state_collector, "_safe_ip", return_value=""
+        ), patch.object(
+            state_collector, "_run_command", return_value=""
+        ), patch.object(
+            state_collector, "_safe_kubectl_version_short", return_value=""
+        ), patch.object(
+            state_collector, "_safe_kubectl_version_json", return_value=""
+        ), patch.object(
+            state_collector, "_safe_uname", return_value=""
+        ), patch.object(
+            state_collector, "_safe_containerd_version", return_value=""
+        ), patch.object(
+            state_collector, "_safe_kubelet_version", return_value=""
+        ), patch.object(
+            state_collector, "_safe_runc_version", return_value=""
+        ), patch.object(
+            state_collector, "_detect_cni", return_value=node_detection
+        ), patch.object(
+            state_collector, "_detect_cni_from_pods", return_value=cluster_detection
+        ), patch.object(
+            state_collector,
+            "_collect_calico_runtime_evidence",
+            return_value={
+                "status": "established",
+                "pod": "calico-node-46g9k",
+                "bird_ready": True,
+                "established_peers": 1,
+                "protocol_lines": ["Mesh_10_2_0_3 BGP master up Established"],
+                "summary": "BGP peers established=1",
+                "source": "kubectl_exec_birdcl",
+                "raw_output": "BIRD ready",
+            },
+        ):
+            state = state_collector.collect_state(allow_host_evidence=True)
+
+        self.assertEqual(state["summary"]["versions"]["cni"], "calico")
+        self.assertEqual(state["evidence"]["cni"]["reconciliation"], "conflict")
+        self.assertEqual(state["health"]["cni_ok"], "unknown")
+
     def test_collect_state_marks_partial_calico_evidence_as_unknown_health(self):
         node_detection = {
             "cni": "unknown",

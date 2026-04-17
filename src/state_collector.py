@@ -999,6 +999,8 @@ def _health_flags(
     cni_reconciliation = cni_evidence.get("reconciliation", "unknown")
     cni_cluster_footprint = cni_evidence.get("cluster_footprint", {})
     calico_runtime = cni_evidence.get("calico_runtime", {})
+    cni_node_level = cni_evidence.get("node_level", {})
+    cni_cluster_level = cni_evidence.get("cluster_level", {})
     nodes_ready_now = _all_nodes_ready(runtime.get("nodes", ""))
 
     pods_pending = "pending" in pods_text
@@ -1142,8 +1144,19 @@ def _health_flags(
         and expected_daemonsets
         and not (observed_cni_daemonsets & expected_daemonsets)
     )
+    override_config_conflict = (
+        cni_reconciliation == "conflict"
+        and cni_node_level.get("config_dir_source") == "env_override"
+        and cni_cluster_level.get("cni", "unknown") == cni_text
+    )
+    strong_live_cluster_cni_evidence = bool(
+        expected_daemonsets
+        and (observed_cni_daemonsets & expected_daemonsets)
+    ) or (cni_text == "calico" and calico_runtime.get("status") == "established")
 
     if cni_text in {"", "unknown"}:
+        cni_ok = "unknown"
+    elif override_config_conflict and strong_live_cluster_cni_evidence:
         cni_ok = "unknown"
     elif cni_reconciliation == "conflict":
         cni_ok = "degraded"
