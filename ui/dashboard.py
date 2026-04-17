@@ -11,6 +11,8 @@ from state_collector import collect_state
 from dashboard_presenters import cni_config_spec_display
 from agent import ask_llm
 
+ALLOW_HOST_EVIDENCE = "--allow-host-evidence" in sys.argv[1:]
+
 st.set_page_config(layout="wide")
 st.title("🧠 CKA Coach — ELS Console")
 st.subheader("Everything Lives Somewhere...")
