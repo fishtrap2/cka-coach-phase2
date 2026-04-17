@@ -73,6 +73,7 @@ def normalize_collected_state(collected_state: dict) -> dict:
     summary_versions = collected_state.get("summary", {}).get("versions", {})
     health = collected_state.get("health", {})
     cni_evidence = collected_state.get("evidence", {}).get("cni", {})
+    kubelet_transitional_note = health.get("kubelet_transitional_note", "")
     node_level = cni_evidence.get("node_level", {})
     cluster_level = cni_evidence.get("cluster_level", {})
 
@@ -186,7 +187,12 @@ def normalize_collected_state(collected_state: dict) -> dict:
         "events": runtime.get("events", ""),
         "nodes": runtime.get("nodes", ""),
         "network_policies": runtime.get("network_policies", ""),
-        "kubelet": runtime.get("kubelet", ""),
+        "kubelet": runtime.get("kubelet", "")
+        + (
+            "\n\n[kubelet health note]\n" + kubelet_transitional_note
+            if kubelet_transitional_note
+            else ""
+        ),
         "containerd": runtime.get("containerd", ""),
         "containers": runtime.get("containers", ""),
         "processes": runtime.get("processes", ""),

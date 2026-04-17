@@ -159,6 +159,7 @@ def summarize(state: dict) -> dict:
     operator_preview = ", ".join(operator_pods[:3]) if operator_pods else "none directly observed"
 
     kubelet_ok = health.get("kubelet_ok", None)
+    kubelet_transitional_note = health.get("kubelet_transitional_note", "")
     containerd_ok = health.get("containerd_ok", None)
 
     cni_name = summary_versions.get("cni", versions.get("cni", ""))
@@ -195,7 +196,11 @@ def summarize(state: dict) -> dict:
         )
 
     if kubelet_ok is True:
-        kubelet_text = "kubelet running"
+        kubelet_text = (
+            "kubelet running | cleanup/history noise observed"
+            if kubelet_transitional_note
+            else "kubelet running"
+        )
     elif kubelet_ok is False:
         kubelet_text = "kubelet issue"
     else:

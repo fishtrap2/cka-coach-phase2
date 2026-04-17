@@ -805,6 +805,54 @@ def _detect_cni_name() -> str:
     return _detect_cni().get("cni", "unknown")
 
 
+def _all_nodes_ready(nodes_text: str) -> bool | None:
+    """
+    Return True when all listed nodes are Ready, False when any are not, else None.
+    """
+    lowered = nodes_text.lower()
+    if not nodes_text.strip() or "kubectl not installed" in lowered:
+        return None
+
+    lines = [line for line in nodes_text.splitlines() if line.strip()]
+    data_lines = lines[1:] if len(lines) > 1 else []
+    if not data_lines:
+        return None
+
+    statuses = []
+    for line in data_lines:
+        parts = line.split()
+        if len(parts) >= 2:
+            statuses.append(parts[1])
+
+    if not statuses:
+        return None
+
+    if all(status == "Ready" for status in statuses):
+        return True
+
+    return False
+
+
+def _has_kubelet_cleanup_noise(kubelet_text: str) -> bool:
+    """
+    Detect cleanup/history messages that should not by themselves mark kubelet unhealthy.
+    """
+    cleanup_patterns = [
+        "container not found",
+        "not found in pod's containers",
+        "deletecontainer",
+        "removecontainer",
+        "orphaned pod",
+        "volume paths are still present",
+        "podsandbox not found",
+        "failed to get container status",
+        "stale status",
+        "already removed",
+    ]
+
+    return any(pattern in kubelet_text for pattern in cleanup_patterns)
+
+
 def _health_flags(
     runtime: Dict[str, str],
     versions: Dict[str, str],
@@ -835,21 +883,48 @@ def _health_flags(
     cni_evidence = (evidence or {}).get("cni", {})
     cni_reconciliation = cni_evidence.get("reconciliation", "unknown")
     cni_cluster_footprint = cni_evidence.get("cluster_footprint", {})
+    nodes_ready_now = _all_nodes_ready(runtime.get("nodes", ""))
 
     pods_pending = "pending" in pods_text
     pods_crashloop = "crashloopbackoff" in pods_text
 
     # kubelet
+    kubelet_cleanup_noise = _has_kubelet_cleanup_noise(kubelet_text)
+    kubelet_service_active = "active (running)" in kubelet_text or "running" in kubelet_text
+    kubelet_service_failed = (
+        ("inactive" in kubelet_text or "failed" in kubelet_text)
+        and not kubelet_service_active
+    )
+    kubelet_network_plugin_not_ready = (
+        "networkpluginnotready" in kubelet_text
+        or "network plugin is not ready" in kubelet_text
+    ) and nodes_ready_now is not True
+
     if "systemctl not available" in kubelet_text:
         kubelet_ok = None
     elif "not installed" in kubelet_text or "not on path" in kubelet_text:
         kubelet_ok = None
-    elif "inactive" in kubelet_text or "failed" in kubelet_text:
+    elif kubelet_service_failed:
         kubelet_ok = False
-    elif "active (running)" in kubelet_text or "running" in kubelet_text:
+    elif (
+        kubelet_service_active
+        and nodes_ready_now is True
+        and pods_pending is False
+        and pods_crashloop is False
+        and not kubelet_network_plugin_not_ready
+    ):
+        kubelet_ok = True
+    elif kubelet_service_active:
         kubelet_ok = True
     else:
         kubelet_ok = None
+
+    kubelet_transitional_note = ""
+    if kubelet_ok is True and kubelet_cleanup_noise:
+        kubelet_transitional_note = (
+            "Recent kubelet output includes cleanup/history messages for removed containers, "
+            "orphaned volumes, or stale status lookups. Current service and node readiness still indicate kubelet is functioning."
+        )
 
     # containerd
     if "systemctl not available" in containerd_text:
@@ -952,6 +1027,8 @@ def _health_flags(
         "events_ok": events_ok,
         "nodes_ok": nodes_ok,
         "kubelet_ok": kubelet_ok,
+        "kubelet_cleanup_noise": kubelet_cleanup_noise,
+        "kubelet_transitional_note": kubelet_transitional_note,
         "containerd_ok": containerd_ok,
         "runc_ok": runc_ok,
         "kernel_ok": kernel_ok,

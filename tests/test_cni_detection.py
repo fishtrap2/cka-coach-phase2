@@ -11,6 +11,55 @@ import state_collector
 
 
 class TestCniDetection(unittest.TestCase):
+    def test_kubelet_health_ignores_cleanup_noise_when_service_and_nodes_are_healthy(self):
+        runtime = {
+            "pods": (
+                "NAMESPACE NAME READY STATUS RESTARTS AGE IP NODE NOMINATED NODE READINESS GATES\n"
+                "kube-system calico-node-abcde 1/1 Running 0 1h 10.0.0.1 cp <none> <none>\n"
+            ),
+            "events": "",
+            "nodes": (
+                "NAME STATUS ROLES AGE VERSION INTERNAL-IP EXTERNAL-IP OS-IMAGE KERNEL-VERSION CONTAINER-RUNTIME\n"
+                "cp Ready control-plane 58d v1.33.1 10.2.0.2 <none> Ubuntu 24.04 6.17.0 containerd://2.2.1\n"
+                "worker1 Ready <none> 58d v1.33.1 10.2.0.3 <none> Ubuntu 24.04 6.17.0 containerd://2.2.1\n"
+            ),
+            "kubelet": (
+                "kubelet.service - kubelet\n"
+                "   Active: active (running)\n"
+                "DeleteContainer for container not found\n"
+                "orphaned pod volume paths are still present\n"
+                "failed to get container status for already removed pod\n"
+            ),
+            "containerd": "",
+        }
+        versions = {"api": "", "runc": "", "kernel": "", "cni": "calico"}
+        evidence = {"cni": {"reconciliation": "single_source", "cluster_footprint": {"summary": "cluster footprint not directly observed", "daemonsets": []}}}
+
+        result = state_collector._health_flags(runtime, versions, evidence)
+
+        self.assertTrue(result["kubelet_ok"])
+        self.assertTrue(result["kubelet_cleanup_noise"])
+        self.assertIn("cleanup/history messages", result["kubelet_transitional_note"])
+
+    def test_kubelet_health_stays_unhealthy_for_real_service_failure(self):
+        runtime = {
+            "pods": "",
+            "events": "",
+            "nodes": (
+                "NAME STATUS ROLES AGE VERSION INTERNAL-IP EXTERNAL-IP OS-IMAGE KERNEL-VERSION CONTAINER-RUNTIME\n"
+                "cp NotReady control-plane 58d v1.33.1 10.2.0.2 <none> Ubuntu 24.04 6.17.0 containerd://2.2.1\n"
+            ),
+            "kubelet": "kubelet.service - kubelet\n   Active: failed",
+            "containerd": "",
+        }
+        versions = {"api": "", "runc": "", "kernel": "", "cni": "unknown"}
+
+        result = state_collector._health_flags(runtime, versions, {})
+
+        self.assertFalse(result["kubelet_ok"])
+        self.assertFalse(result["kubelet_cleanup_noise"])
+        self.assertEqual(result["kubelet_transitional_note"], "")
+
     def test_default_cni_config_dir_behavior(self):
         with patch.dict(os.environ, {}, clear=True):
             result = state_collector._resolve_cni_config_dir()
