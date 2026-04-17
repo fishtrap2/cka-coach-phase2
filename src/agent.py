@@ -98,10 +98,22 @@ def normalize_collected_state(collected_state: dict) -> dict:
     missing_or_unverified = []
     if cluster_level.get("cni", "unknown") == "unknown":
         missing_or_unverified.append("No recognized kube-system CNI pod names were detected.")
+    elif not matched_pods:
+        missing_or_unverified.append("Cluster-level pod evidence is limited, so the full CNI component footprint is not fully visible.")
     if node_level.get("cni", "unknown") == "unknown":
         missing_or_unverified.append("No recognized node-level CNI config filename was detected.")
     elif not config_content.strip():
         missing_or_unverified.append("Node-level CNI config content was not directly collected from the selected file.")
+    if (
+        cluster_footprint.get("daemonset_count", 0) == 0
+        and "not directly observed" in cluster_footprint.get("summary", "")
+    ):
+        missing_or_unverified.append("CNI DaemonSet presence or readiness was not directly collected from cluster evidence.")
+    if version.get("value", "unknown") == "unknown":
+        missing_or_unverified.append("The CNI plugin version is not directly evidenced from a single trustworthy image tag.")
+    missing_or_unverified.append(
+        "CNI-specific health output from the plugin itself is still not directly verified from the provided context."
+    )
     if cni_evidence.get("reconciliation", "unknown") == "conflict":
         missing_or_unverified.append(
             "Cluster-level and node-level signals conflict, so the result is a lower-certainty inference rather than a well-supported conclusion."
