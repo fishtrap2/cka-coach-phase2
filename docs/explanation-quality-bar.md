@@ -38,6 +38,29 @@ Why this answer is our current bar:
 
 ---
 
+## Second Reference Standard
+
+We also now have a second strong reference pattern:
+
+* an L4.3 / Cilium answer where the cluster still indicates Cilium clearly,
+  but the health picture is only partially healthy because recent agent
+  restarts or readiness failures are present
+
+Why this answer matters:
+
+* it preserves clear CNI identification
+* it does not collapse into “healthy” just because the platform is still present
+* it does not collapse into “broken” just because some health signals are noisy
+* it explains a **partially healthy / degraded-but-present** state in a way a student can understand
+
+This is important because real student clusters are often not perfectly clean.
+The explanation quality bar must therefore cover both:
+
+* clean, healthy explanation cases
+* partially healthy / unstable explanation cases
+
+---
+
 ## Quality Criteria
 
 A strong cka-coach explanation should usually do all of the following:
@@ -111,6 +134,23 @@ Good answers:
 * use short bullet lists where helpful
 * avoid turning every answer into a long essay
 
+### 7. Handle partial health honestly
+
+Strong answers should handle “present but unstable” states well.
+
+Good answers:
+
+* identify the component correctly
+* explain that it is still present or active
+* describe recent health instability proportionally
+* avoid flipping too quickly to either “fully healthy” or “fully broken”
+
+This matters especially for:
+
+* CNI agents with restarts
+* readiness probe failures
+* control components that are present but not fully healthy
+
 ---
 
 ## Review Checklist
@@ -123,6 +163,7 @@ When reviewing a new explanation behavior, ask:
 4. Does it avoid unsupported claims?
 5. Does it help the student keep learning from inside the cluster context?
 6. Is it concise enough to stay approachable?
+7. If the system is only partially healthy, does the answer describe that state proportionally?
 
 If the answer misses several of these, it is below the current quality bar.
 
