@@ -161,6 +161,7 @@ def summarize(state: dict) -> dict:
     kubelet_ok = health.get("kubelet_ok", None)
     kubelet_transitional_note = health.get("kubelet_transitional_note", "")
     containerd_ok = health.get("containerd_ok", None)
+    containerd_transitional_note = health.get("containerd_transitional_note", "")
 
     cni_name = summary_versions.get("cni", versions.get("cni", ""))
     kernel_ver = versions.get("kernel", "")
@@ -207,7 +208,11 @@ def summarize(state: dict) -> dict:
         kubelet_text = "kubelet status unknown (no host access)"
 
     if containerd_ok is True:
-        containerd_text = "containerd running"
+        containerd_text = (
+            "containerd running | cleanup/history noise observed"
+            if containerd_transitional_note
+            else "containerd running"
+        )
     elif containerd_ok is False:
         containerd_text = "containerd issue"
     else:

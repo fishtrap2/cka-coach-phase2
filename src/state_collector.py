@@ -949,6 +949,25 @@ def _has_kubelet_cleanup_noise(kubelet_text: str) -> bool:
     return any(pattern in kubelet_text for pattern in cleanup_patterns)
 
 
+def _has_containerd_cleanup_noise(containerd_text: str) -> bool:
+    """
+    Detect cleanup/history messages that should not by themselves mark containerd unhealthy.
+    """
+    cleanup_patterns = [
+        "not found",
+        "already removed",
+        "failed to delete",
+        "cleanup",
+        "remove container",
+        "remove task",
+        "failed to get task",
+        "shim disconnected",
+        "stale status",
+    ]
+
+    return any(pattern in containerd_text for pattern in cleanup_patterns)
+
+
 def _health_flags(
     runtime: Dict[str, str],
     versions: Dict[str, str],
@@ -1024,16 +1043,37 @@ def _health_flags(
         )
 
     # containerd
+    containerd_cleanup_noise = _has_containerd_cleanup_noise(containerd_text)
+    containerd_service_active = "active (running)" in containerd_text or "running" in containerd_text
+    containerd_service_failed = (
+        ("inactive" in containerd_text or "failed" in containerd_text)
+        and not containerd_service_active
+    )
+
     if "systemctl not available" in containerd_text:
         containerd_ok = None
     elif "not installed" in containerd_text or "not on path" in containerd_text:
         containerd_ok = None
-    elif "inactive" in containerd_text or "failed" in containerd_text:
+    elif containerd_service_failed:
         containerd_ok = False
-    elif "active (running)" in containerd_text or "running" in containerd_text:
+    elif (
+        containerd_service_active
+        and nodes_ready_now is True
+        and pods_pending is False
+        and pods_crashloop is False
+    ):
+        containerd_ok = True
+    elif containerd_service_active:
         containerd_ok = True
     else:
         containerd_ok = None
+
+    containerd_transitional_note = ""
+    if containerd_ok is True and containerd_cleanup_noise:
+        containerd_transitional_note = (
+            "Recent containerd output includes cleanup/history messages for removed containers, "
+            "tasks, or stale status lookups. Current service and node readiness still indicate containerd is functioning."
+        )
 
     # pods
     if "kubectl not installed" in pods_text:
@@ -1129,6 +1169,8 @@ def _health_flags(
         "kubelet_cleanup_noise": kubelet_cleanup_noise,
         "kubelet_transitional_note": kubelet_transitional_note,
         "containerd_ok": containerd_ok,
+        "containerd_cleanup_noise": containerd_cleanup_noise,
+        "containerd_transitional_note": containerd_transitional_note,
         "runc_ok": runc_ok,
         "kernel_ok": kernel_ok,
         "cni_ok": cni_ok,

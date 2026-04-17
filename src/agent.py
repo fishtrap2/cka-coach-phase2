@@ -74,6 +74,7 @@ def normalize_collected_state(collected_state: dict) -> dict:
     health = collected_state.get("health", {})
     cni_evidence = collected_state.get("evidence", {}).get("cni", {})
     kubelet_transitional_note = health.get("kubelet_transitional_note", "")
+    containerd_transitional_note = health.get("containerd_transitional_note", "")
     node_level = cni_evidence.get("node_level", {})
     cluster_level = cni_evidence.get("cluster_level", {})
 
@@ -206,7 +207,12 @@ def normalize_collected_state(collected_state: dict) -> dict:
             if kubelet_transitional_note
             else ""
         ),
-        "containerd": runtime.get("containerd", ""),
+        "containerd": runtime.get("containerd", "")
+        + (
+            "\n\n[containerd health note]\n" + containerd_transitional_note
+            if containerd_transitional_note
+            else ""
+        ),
         "containers": runtime.get("containers", ""),
         "processes": runtime.get("processes", ""),
         "network": runtime.get("network", ""),
@@ -515,7 +521,9 @@ Use precise language:
 - use the combined confidence from primary_layer_context exactly as written for the overall conclusion
 - if combined confidence is medium, do not describe the overall interpretation as high-confidence
 - if cluster-level evidence is strong but combined confidence is only medium, describe that as direct cluster-level support with a medium-confidence overall conclusion
+- if health/status meaning is degraded, describe the CNI as present but partially healthy or degraded; do not call it healthy
 - keep health/status meaning aligned with primary_layer_context; if it says unknown, describe visibility as limited rather than healthy or degraded
+- only describe the CNI as healthy when primary_layer_context explicitly says health/status meaning: healthy
 - do not warn that generic pod listings are truncated if primary_layer_context already contains sufficient cluster-level CNI evidence
 - only warn about incomplete, weak, or conflicting evidence when the primary_layer_context itself shows that limitation
 """

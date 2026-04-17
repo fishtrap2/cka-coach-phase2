@@ -95,6 +95,53 @@ class TestCniDetection(unittest.TestCase):
         self.assertFalse(result["kubelet_cleanup_noise"])
         self.assertEqual(result["kubelet_transitional_note"], "")
 
+    def test_containerd_health_ignores_cleanup_noise_when_service_and_nodes_are_healthy(self):
+        runtime = {
+            "pods": (
+                "NAMESPACE NAME READY STATUS RESTARTS AGE IP NODE NOMINATED NODE READINESS GATES\n"
+                "default testpod 1/1 Running 0 1h 10.0.0.9 worker1 <none> <none>\n"
+            ),
+            "events": "",
+            "nodes": (
+                "NAME STATUS ROLES AGE VERSION INTERNAL-IP EXTERNAL-IP OS-IMAGE KERNEL-VERSION CONTAINER-RUNTIME\n"
+                "cp Ready control-plane 58d v1.33.1 10.2.0.2 <none> Ubuntu 24.04 6.17.0 containerd://2.2.1\n"
+                "worker1 Ready <none> 58d v1.33.1 10.2.0.3 <none> Ubuntu 24.04 6.17.0 containerd://2.2.1\n"
+            ),
+            "kubelet": "",
+            "containerd": (
+                "containerd.service - containerd\n"
+                "   Active: active (running)\n"
+                "failed to delete task: not found\n"
+                "cleanup completed for already removed container\n"
+            ),
+        }
+        versions = {"api": "", "runc": "", "kernel": "", "cni": "unknown"}
+
+        result = state_collector._health_flags(runtime, versions, {})
+
+        self.assertTrue(result["containerd_ok"])
+        self.assertTrue(result["containerd_cleanup_noise"])
+        self.assertIn("cleanup/history messages", result["containerd_transitional_note"])
+
+    def test_containerd_health_stays_unhealthy_for_real_service_failure(self):
+        runtime = {
+            "pods": "",
+            "events": "",
+            "nodes": (
+                "NAME STATUS ROLES AGE VERSION INTERNAL-IP EXTERNAL-IP OS-IMAGE KERNEL-VERSION CONTAINER-RUNTIME\n"
+                "cp NotReady control-plane 58d v1.33.1 10.2.0.2 <none> Ubuntu 24.04 6.17.0 containerd://2.2.1\n"
+            ),
+            "kubelet": "",
+            "containerd": "containerd.service - containerd\n   Active: failed",
+        }
+        versions = {"api": "", "runc": "", "kernel": "", "cni": "unknown"}
+
+        result = state_collector._health_flags(runtime, versions, {})
+
+        self.assertFalse(result["containerd_ok"])
+        self.assertFalse(result["containerd_cleanup_noise"])
+        self.assertEqual(result["containerd_transitional_note"], "")
+
     def test_default_cni_config_dir_behavior(self):
         with patch.dict(os.environ, {}, clear=True):
             result = state_collector._resolve_cni_config_dir()
