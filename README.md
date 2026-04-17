@@ -108,6 +108,11 @@ It is a **learning system** that:
 3. maps everything back to the ELS model
 4. highlights uncertainty when present
 
+Phase 2 also maintains an explicit explanation quality bar so new changes can
+be compared against a strong student-facing standard:
+
+* [Explanation Quality Bar](docs/explanation-quality-bar.md)
+
 ---
 
 ## Phase 2 focus areas

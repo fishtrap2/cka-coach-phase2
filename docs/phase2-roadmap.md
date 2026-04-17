@@ -162,6 +162,12 @@ For L4.3 CNI explanations, the explanation should be structured as:
 5. What is still unverified
 6. Final confidence/health conclusion
 
+Explanations should also be judged against the project’s student-facing quality
+bar so they remain evidence-led, concise, uncertainty-aware, and immersive from
+inside the cluster context:
+
+* [Explanation Quality Bar](explanation-quality-bar.md)
+
 ---
 
 ### 6.4 CNI Comparison & Migration Guidance
