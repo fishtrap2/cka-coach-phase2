@@ -3,6 +3,7 @@ import os
 import platform
 import shutil
 import subprocess
+from datetime import datetime, timezone
 from typing import Dict, Any, List
 
 
@@ -856,6 +857,230 @@ def _collect_calico_runtime_evidence(cluster_level: Dict[str, Any]) -> Dict[str,
     }
 
 
+def _parse_nodes_taints(nodes_json: str) -> List[Dict[str, str]]:
+    """
+    Parse node taints from kubectl get nodes -o json output.
+    """
+    if not nodes_json.strip():
+        return []
+
+    try:
+        data = json.loads(nodes_json)
+    except Exception:
+        return []
+
+    taints = []
+    for item in data.get("items", []):
+        node_name = item.get("metadata", {}).get("name", "")
+        for taint in item.get("spec", {}).get("taints", []) or []:
+            taints.append(
+                {
+                    "node": node_name,
+                    "key": taint.get("key", ""),
+                    "value": taint.get("value", ""),
+                    "effect": taint.get("effect", ""),
+                }
+            )
+    return taints
+
+
+def _detect_stale_cni_taints(nodes_json: str, current_cni: str) -> Dict[str, Any]:
+    """
+    Detect leftover taints from a previous CNI.
+    """
+    taints = _parse_nodes_taints(nodes_json)
+    stale = []
+    previous = "unknown"
+    for taint in taints:
+        key = taint.get("key", "").lower()
+        if "node.cilium.io/" in key and current_cni != "cilium":
+            stale.append(taint)
+            previous = "cilium"
+
+    return {
+        "detected": bool(stale),
+        "previous_cni": previous,
+        "taints": stale,
+        "summary": (
+            f"stale taints detected ({len(stale)})"
+            if stale
+            else "no stale CNI taints detected"
+        ),
+    }
+
+
+def _detect_stale_cni_interfaces(network_text: str, current_cni: str) -> Dict[str, Any]:
+    """
+    Detect leftover node interfaces from a previous CNI.
+    """
+    stale = []
+    previous = "unknown"
+    for line in network_text.splitlines():
+        stripped = line.strip()
+        if not stripped or ": " not in stripped:
+            continue
+        iface_name = stripped.split(": ", 1)[1].split(":", 1)[0].split("@", 1)[0]
+        lower = iface_name.lower()
+        if lower.startswith(("cilium_host", "cilium_net", "lxc")) and current_cni != "cilium":
+            stale.append(iface_name)
+            previous = "cilium"
+        elif lower in {"tunl0", "vxlan.calico"} and current_cni != "calico":
+            stale.append(iface_name)
+            previous = "calico"
+
+    return {
+        "detected": bool(stale),
+        "previous_cni": previous,
+        "interfaces": sorted(set(stale)),
+        "summary": (
+            f"stale interfaces detected ({', '.join(sorted(set(stale)))})"
+            if stale
+            else "no stale CNI interfaces detected"
+        ),
+    }
+
+
+def _load_cni_provenance(configmap_json: str) -> Dict[str, Any]:
+    """
+    Load optional CNI provenance metadata from a ConfigMap.
+    """
+    missing = {
+        "available": False,
+        "source": "configmap_missing",
+        "current_detected_cni": "unknown",
+        "previous_detected_cni": "unknown",
+        "last_cleaned_at": "",
+        "cleaned_by": "",
+        "last_install_observed_at": "",
+        "evidence_basis": "no provenance ConfigMap was found",
+    }
+
+    lower = configmap_json.lower()
+    if not configmap_json.strip() or "notfound" in lower or "not found" in lower:
+        return missing
+
+    try:
+        data = json.loads(configmap_json)
+    except Exception:
+        return {
+            **missing,
+            "source": "configmap_unparseable",
+            "evidence_basis": "provenance ConfigMap could not be parsed",
+        }
+
+    cm_data = data.get("data", {}) or {}
+    return {
+        "available": True,
+        "source": "kube_system_configmap",
+        "current_detected_cni": cm_data.get("current_detected_cni", "unknown"),
+        "previous_detected_cni": cm_data.get("previous_detected_cni", "unknown"),
+        "last_cleaned_at": cm_data.get("last_cleaned_at", ""),
+        "cleaned_by": cm_data.get("cleaned_by", ""),
+        "last_install_observed_at": cm_data.get("last_install_observed_at", ""),
+        "evidence_basis": cm_data.get(
+            "evidence_basis",
+            "loaded from kube-system/cka-coach-provenance",
+        ),
+    }
+
+
+def _classify_cni_state(
+    runtime: Dict[str, str],
+    versions: Dict[str, str],
+    evidence: Dict[str, Any],
+    health: Dict[str, Any] | None = None,
+) -> Dict[str, Any]:
+    """
+    Classify the current CNI state into one normalized educational label.
+    """
+    health = health or {}
+    cni_text = versions.get("cni", "unknown")
+    node_level = evidence.get("node_level", {})
+    cluster_level = evidence.get("cluster_level", {})
+    cluster_footprint = evidence.get("cluster_footprint", {})
+    calico_runtime = evidence.get("calico_runtime", {})
+    migration_note = evidence.get("migration_note", "")
+    node_cni = node_level.get("cni", "unknown")
+    cluster_cni = cluster_level.get("cni", "unknown")
+    reconciliation = evidence.get("reconciliation", "unknown")
+    nodes_ready = _all_nodes_ready(runtime.get("nodes", ""))
+    pods_text = runtime.get("pods", "").lower()
+    pods_running = bool(pods_text.strip()) and "pending" not in pods_text and "crashloopbackoff" not in pods_text
+    stale_taints = _detect_stale_cni_taints(runtime.get("nodes_json", ""), cni_text)
+    stale_interfaces = _detect_stale_cni_interfaces(runtime.get("network", ""), cni_text)
+
+    notes = []
+    previous_detected_cni = "unknown"
+    if stale_taints.get("detected"):
+        previous_detected_cni = stale_taints.get("previous_cni", "unknown")
+        notes.append("Leftover taints from a previous CNI are still present.")
+    if stale_interfaces.get("detected"):
+        if previous_detected_cni == "unknown":
+            previous_detected_cni = stale_interfaces.get("previous_cni", "unknown")
+        notes.append("Leftover node interfaces from a previous CNI are still present.")
+    if reconciliation == "conflict":
+        if previous_detected_cni == "unknown" and node_cni not in {"", "unknown"} and cluster_cni not in {"", "unknown"}:
+            previous_detected_cni = node_cni if node_cni != cni_text else cluster_cni
+        notes.append("Node-level and cluster-level CNI signals do not match.")
+
+    strong_calico = (
+        cni_text == "calico"
+        and cluster_cni == "calico"
+        and any(ds.get("name") == "calico-node" for ds in cluster_footprint.get("daemonsets", []))
+        and calico_runtime.get("status") == "established"
+    )
+    strong_cilium = (
+        cni_text == "cilium"
+        and cluster_cni == "cilium"
+        and any(ds.get("name") == "cilium" for ds in cluster_footprint.get("daemonsets", []))
+    )
+
+    if node_cni not in {"", "unknown"} and cluster_cni not in {"", "unknown"} and node_cni != cluster_cni:
+        state = "stale_node_config"
+        reason = (
+            f"Cluster evidence indicates {cluster_cni}, but node-level config still references {node_cni}."
+        )
+    elif stale_taints.get("detected"):
+        state = "stale_taint"
+        reason = "Current cluster state does not match CNI-specific taints that remain on nodes."
+    elif stale_interfaces.get("detected"):
+        state = "stale_interfaces"
+        reason = "Current cluster state does not match leftover CNI-specific interfaces still present on nodes."
+    elif reconciliation in {"conflict", "single_source"}:
+        state = "mixed_or_transitional"
+        reason = migration_note or "Evidence suggests an in-progress migration or only partially verified CNI state."
+    elif strong_calico:
+        state = "healthy_calico"
+        reason = "Calico daemonset/runtime evidence is present with no conflicting CNI signal."
+    elif strong_cilium:
+        state = "healthy_cilium"
+        reason = "Cilium daemonset/operator evidence is present with no conflicting CNI signal."
+    elif cni_text in {"", "unknown"} and node_cni in {"", "unknown"} and cluster_cni in {"", "unknown"}:
+        if nodes_ready is True and pods_running:
+            state = "generic_cni"
+            reason = "Networking appears functional, but no strong Calico or Cilium signature was detected."
+        else:
+            state = "no_cni"
+            reason = "No cluster-level or node-level CNI signals were detected."
+    elif cni_text not in {"", "unknown"} and cni_text not in {"calico", "cilium"}:
+        state = "generic_cni"
+        reason = "A non-specific or generic CNI signal was detected without strong Calico or Cilium evidence."
+    else:
+        state = "generic_cni"
+        reason = "Available networking evidence is functional but does not fit a stronger normalized CNI state."
+
+    return {
+        "state": state,
+        "reason": reason,
+        "notes": notes,
+        "previous_detected_cni": previous_detected_cni,
+        "stale_taint": stale_taints,
+        "stale_interfaces": stale_interfaces,
+        "health_status": health.get("cni_ok", "unknown"),
+        "confidence": evidence.get("confidence", "low"),
+    }
+
+
 def _detect_cni_config_spec_version(
     config_content: str,
     selected_file: str,
@@ -1190,7 +1415,10 @@ def _health_flags(
     }
 
 
-def collect_state(allow_host_evidence: bool = False) -> Dict[str, Any]:
+def collect_state(
+    allow_host_evidence: bool = False,
+    include_logs: bool = False,
+) -> Dict[str, Any]:
     """
     Collect structured state for cka-coach.
 
@@ -1225,6 +1453,7 @@ def collect_state(allow_host_evidence: bool = False) -> Dict[str, Any]:
 
         # Node view is useful for scheduler/controller and node/network questions
         "nodes": _safe_kubectl("kubectl get nodes -o wide"),
+        "nodes_json": _safe_kubectl("kubectl get nodes -o json"),
 
         # kubelet belongs primarily to the node_agents_and_networking layer
         "kubelet": _safe_systemctl("kubelet"),
@@ -1252,7 +1481,16 @@ def collect_state(allow_host_evidence: bool = False) -> Dict[str, Any]:
 
         # detailed kube-system pod data used for direct image-tag evidence
         "kube_system_pods_json": _safe_kubectl("kubectl get pods -n kube-system -o json"),
+
+        # optional provenance metadata stored in-cluster
+        "cni_provenance_configmap": _safe_kubectl(
+            "kubectl get configmap cka-coach-provenance -n kube-system -o json"
+        ),
     }
+
+    if include_logs:
+        runtime["kubelet_logs"] = _safe_journalctl("kubelet", lines=80)
+        runtime["containerd_logs"] = _safe_journalctl("containerd", lines=80)
 
     # --------------------------
     # Version / identity evidence
@@ -1291,6 +1529,7 @@ def collect_state(allow_host_evidence: bool = False) -> Dict[str, Any]:
         node_cni_detection,
         cluster_cni_detection,
     )
+    provenance = _load_cni_provenance(runtime.get("cni_provenance_configmap", ""))
 
     versions = {
         "api": _safe_kubectl_version_short(),
@@ -1308,7 +1547,8 @@ def collect_state(allow_host_evidence: bool = False) -> Dict[str, Any]:
             "cni": versions.get("cni", "unknown"),
             "cni_version": cni_version.get("value", "unknown"),
             "cni_config_spec_version": cni_config_spec_version.get("value", "unknown"),
-        }
+        },
+        "cni_classification": "unknown",
     }
 
     evidence = {
@@ -1324,6 +1564,7 @@ def collect_state(allow_host_evidence: bool = False) -> Dict[str, Any]:
             "config_spec_version": cni_config_spec_version,
             "config_content": cni_config_content,
             "migration_note": migration_note,
+            "provenance": provenance,
             "node_level": node_cni_detection,
             "cluster_level": cluster_cni_detection,
         },
@@ -1334,6 +1575,22 @@ def collect_state(allow_host_evidence: bool = False) -> Dict[str, Any]:
     # --------------------------
     # These are simple derived health/status flags inferred from the collected data.
     health = _health_flags(runtime, versions, evidence)
+    classification = _classify_cni_state(runtime, versions, evidence["cni"], health)
+    evidence["cni"]["classification"] = classification
+    summary["cni_classification"] = classification.get("state", "unknown")
+
+    if provenance.get("available") and provenance.get("current_detected_cni", "unknown") in {"", "unknown"}:
+        provenance["current_detected_cni"] = versions.get("cni", "unknown")
+    if (
+        not provenance.get("available")
+        and classification.get("previous_detected_cni", "unknown") not in {"", "unknown"}
+    ):
+        provenance["previous_detected_cni"] = classification.get("previous_detected_cni", "unknown")
+        provenance["evidence_basis"] = (
+            f"best-effort inference from current evidence: {classification.get('reason', 'unknown')}"
+        )
+    if versions.get("cni", "unknown") not in {"", "unknown"} and not provenance.get("last_install_observed_at"):
+        provenance["last_install_observed_at"] = datetime.now(timezone.utc).isoformat()
 
     return {
         "runtime": runtime,

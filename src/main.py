@@ -1,3 +1,4 @@
+import json
 import typer
 from rich import print
 
@@ -212,6 +213,29 @@ def ask(
     #        print(f"\nStep {step.get('step', '?')}: {step.get('action', '')}")
     #        print(f"  Why: {step.get('why', '')}")
     #        print(f"  Outcome: {step.get('outcome', '')}")
+
+
+@app.command("dump-state")
+def dump_state(
+    allow_host_evidence: bool = typer.Option(
+        False,
+        "--allow-host-evidence",
+        help="Allow cka-coach to use explicitly exposed host-mounted or user-provided evidence paths.",
+    ),
+    include_logs: bool = typer.Option(
+        False,
+        "--include-logs",
+        help="Include recent kubelet/containerd journal logs in the dump when available.",
+    ),
+):
+    """
+    Dump the full structured collected state for debugging and lab validation.
+    """
+    state = collect_state(
+        allow_host_evidence=allow_host_evidence,
+        include_logs=include_logs,
+    )
+    print(json.dumps(state, indent=2))
 
 
 if __name__ == "__main__":

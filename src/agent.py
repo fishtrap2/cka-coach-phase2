@@ -87,6 +87,8 @@ def normalize_collected_state(collected_state: dict) -> dict:
     capabilities = cni_evidence.get("capabilities", {})
     cluster_footprint = cni_evidence.get("cluster_footprint", {})
     calico_runtime = cni_evidence.get("calico_runtime", {})
+    classification = cni_evidence.get("classification", {})
+    provenance = cni_evidence.get("provenance", {})
     policy_presence = cni_evidence.get("policy_presence", {})
     version = cni_evidence.get("version", {})
     config_spec_version = cni_evidence.get("config_spec_version", {})
@@ -165,6 +167,19 @@ def normalize_collected_state(collected_state: dict) -> dict:
         f"operator present: {cluster_footprint.get('operator_present', False)}\n"
         f"daemonset count: {cluster_footprint.get('daemonset_count', 0)}\n"
         f"daemonsets: {json.dumps(cluster_footprint.get('daemonsets', []), indent=2)}\n\n"
+        "[normalized classification]\n"
+        f"state: {classification.get('state', 'unknown')}\n"
+        f"reason: {classification.get('reason', 'unknown')}\n"
+        f"notes: {json.dumps(classification.get('notes', []), indent=2)}\n"
+        f"previous detected cni: {classification.get('previous_detected_cni', 'unknown')}\n\n"
+        "[provenance]\n"
+        f"available: {provenance.get('available', False)}\n"
+        f"current detected cni: {provenance.get('current_detected_cni', 'unknown')}\n"
+        f"previous detected cni: {provenance.get('previous_detected_cni', 'unknown')}\n"
+        f"last cleaned at: {provenance.get('last_cleaned_at', '') or '(unknown)'}\n"
+        f"cleaned by: {provenance.get('cleaned_by', '') or '(unknown)'}\n"
+        f"last install observed at: {provenance.get('last_install_observed_at', '') or '(unknown)'}\n"
+        f"evidence basis: {provenance.get('evidence_basis', 'unknown')}\n\n"
         "[calico runtime evidence]\n"
         f"summary: {calico_runtime.get('summary', 'not applicable for current CNI')}\n"
         f"status: {calico_runtime.get('status', 'unknown')}\n"
@@ -524,6 +539,7 @@ Use precise language:
 - if health/status meaning is degraded, describe the CNI as present but partially healthy or degraded; do not call it healthy
 - keep health/status meaning aligned with primary_layer_context; if it says unknown, describe visibility as limited rather than healthy or degraded
 - only describe the CNI as healthy when primary_layer_context explicitly says health/status meaning: healthy
+- use the normalized classification and provenance sections when present to explain whether the state looks healthy, mixed, stale, or transitional
 - do not warn that generic pod listings are truncated if primary_layer_context already contains sufficient cluster-level CNI evidence
 - only warn about incomplete, weak, or conflicting evidence when the primary_layer_context itself shows that limitation
 """

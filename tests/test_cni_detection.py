@@ -1,8 +1,10 @@
+import io
+import json
 import os
 import sys
 import unittest
+from contextlib import redirect_stdout
 from unittest.mock import patch
-
 
 sys.path.append(os.path.join(os.path.dirname(__file__), "..", "src"))
 
@@ -1002,6 +1004,151 @@ class TestCniDetection(unittest.TestCase):
             state["evidence"]["cni"]["capabilities"]["policy_support"],
             "platform likely supports network policy features",
         )
+
+    def test_classify_cni_state_healthy_calico(self):
+        runtime = {"nodes": "cp Ready\nworker1 Ready\n", "pods": "kube-system calico-node-abcde Running\n", "nodes_json": "{}", "network": ""}
+        versions = {"cni": "calico"}
+        evidence = {
+            "confidence": "high",
+            "reconciliation": "agree",
+            "migration_note": "Cluster-level and node-level evidence agree on the current CNI.",
+            "node_level": {"cni": "calico"},
+            "cluster_level": {"cni": "calico"},
+            "cluster_footprint": {"daemonsets": [{"name": "calico-node"}]},
+            "calico_runtime": {"status": "established"},
+        }
+
+        result = state_collector._classify_cni_state(runtime, versions, evidence, {"cni_ok": "healthy"})
+
+        self.assertEqual(result["state"], "healthy_calico")
+
+    def test_classify_cni_state_healthy_cilium(self):
+        runtime = {"nodes": "cp Ready\nworker1 Ready\n", "pods": "kube-system cilium-abcde Running\n", "nodes_json": "{}", "network": ""}
+        versions = {"cni": "cilium"}
+        evidence = {
+            "confidence": "high",
+            "reconciliation": "agree",
+            "migration_note": "Cluster-level and node-level evidence agree on the current CNI.",
+            "node_level": {"cni": "cilium"},
+            "cluster_level": {"cni": "cilium"},
+            "cluster_footprint": {"daemonsets": [{"name": "cilium"}]},
+            "calico_runtime": {"status": "not_applicable"},
+        }
+
+        result = state_collector._classify_cni_state(runtime, versions, evidence, {"cni_ok": "healthy"})
+
+        self.assertEqual(result["state"], "healthy_cilium")
+
+    def test_classify_cni_state_generic_cni(self):
+        runtime = {"nodes": "cp Ready\nworker1 Ready\n", "pods": "default app 1/1 Running\n", "nodes_json": "{}", "network": ""}
+        versions = {"cni": "unknown"}
+        evidence = {
+            "confidence": "low",
+            "reconciliation": "unknown",
+            "migration_note": "",
+            "node_level": {"cni": "unknown"},
+            "cluster_level": {"cni": "unknown"},
+            "cluster_footprint": {"daemonsets": []},
+            "calico_runtime": {"status": "unknown"},
+        }
+
+        result = state_collector._classify_cni_state(runtime, versions, evidence, {"cni_ok": "unknown"})
+
+        self.assertEqual(result["state"], "generic_cni")
+
+    def test_classify_cni_state_no_cni(self):
+        runtime = {"nodes": "cp NotReady\n", "pods": "", "nodes_json": "{}", "network": ""}
+        versions = {"cni": "unknown"}
+        evidence = {
+            "confidence": "low",
+            "reconciliation": "unknown",
+            "migration_note": "",
+            "node_level": {"cni": "unknown"},
+            "cluster_level": {"cni": "unknown"},
+            "cluster_footprint": {"daemonsets": []},
+            "calico_runtime": {"status": "unknown"},
+        }
+
+        result = state_collector._classify_cni_state(runtime, versions, evidence, {"cni_ok": "unknown"})
+
+        self.assertEqual(result["state"], "no_cni")
+
+    def test_classify_cni_state_mixed_or_transitional(self):
+        runtime = {"nodes": "cp Ready\n", "pods": "", "nodes_json": "{}", "network": ""}
+        versions = {"cni": "calico"}
+        evidence = {
+            "confidence": "medium",
+            "reconciliation": "single_source",
+            "migration_note": "Only one evidence source identifies the current CNI, so the result remains partially unverified.",
+            "node_level": {"cni": "unknown"},
+            "cluster_level": {"cni": "calico"},
+            "cluster_footprint": {"daemonsets": []},
+            "calico_runtime": {"status": "unknown"},
+        }
+
+        result = state_collector._classify_cni_state(runtime, versions, evidence, {"cni_ok": "unknown"})
+
+        self.assertEqual(result["state"], "mixed_or_transitional")
+
+    def test_classify_cni_state_stale_node_config(self):
+        runtime = {"nodes": "cp Ready\n", "pods": "", "nodes_json": "{}", "network": ""}
+        versions = {"cni": "calico"}
+        evidence = {
+            "confidence": "medium",
+            "reconciliation": "conflict",
+            "migration_note": "Mixed CNI evidence detected.",
+            "node_level": {"cni": "cilium"},
+            "cluster_level": {"cni": "calico"},
+            "cluster_footprint": {"daemonsets": [{"name": "calico-node"}]},
+            "calico_runtime": {"status": "established"},
+        }
+
+        result = state_collector._classify_cni_state(runtime, versions, evidence, {"cni_ok": "unknown"})
+
+        self.assertEqual(result["state"], "stale_node_config")
+
+    def test_load_cni_provenance_missing_is_graceful(self):
+        result = state_collector._load_cni_provenance("Error from server (NotFound): configmaps \"cka-coach-provenance\" not found")
+
+        self.assertFalse(result["available"])
+        self.assertEqual(result["current_detected_cni"], "unknown")
+
+    def test_load_cni_provenance_present(self):
+        configmap_json = json.dumps(
+            {
+                "data": {
+                    "current_detected_cni": "calico",
+                    "previous_detected_cni": "cilium",
+                    "last_cleaned_at": "2026-04-18T12:00:00Z",
+                    "cleaned_by": "student",
+                    "last_install_observed_at": "2026-04-18T12:05:00Z",
+                    "evidence_basis": "manual lab cleanup + install",
+                }
+            }
+        )
+
+        result = state_collector._load_cni_provenance(configmap_json)
+
+        self.assertTrue(result["available"])
+        self.assertEqual(result["current_detected_cni"], "calico")
+        self.assertEqual(result["previous_detected_cni"], "cilium")
+
+    def test_dump_state_like_structure_contains_classification_and_provenance(self):
+        fake_state = {
+            "summary": {"cni_classification": "healthy_calico"},
+            "evidence": {"cni": {"classification": {"state": "healthy_calico"}, "provenance": {"available": False}}},
+            "runtime": {},
+            "versions": {},
+            "health": {},
+        }
+
+        output = io.StringIO()
+        with redirect_stdout(output):
+            print(json.dumps(fake_state))
+
+        parsed = json.loads(output.getvalue())
+        self.assertEqual(parsed["summary"]["cni_classification"], "healthy_calico")
+        self.assertIn("provenance", parsed["evidence"]["cni"])
 
 
 if __name__ == "__main__":

@@ -173,6 +173,7 @@ def summarize(state: dict) -> dict:
     cluster_footprint = cni_evidence.get("cluster_footprint", {}).get("summary", "cluster footprint not directly observed")
     policy_status = cni_evidence.get("policy_presence", {}).get("status", "unknown")
     cni_confidence = cni_evidence.get("confidence", "unknown")
+    cni_classification_state = cni_evidence.get("classification", {}).get("state", "unknown")
     node_level_cni = cni_evidence.get("node_level", {}).get("cni", "unknown")
     cluster_level_cni = cni_evidence.get("cluster_level", {}).get("cni", "unknown")
     reconciliation = cni_evidence.get("reconciliation", "unknown")
@@ -183,7 +184,7 @@ def summarize(state: dict) -> dict:
     }.get(policy_status, policy_status)
 
     cni_summary_text = (
-        f"CNI: {cni_name or 'unknown'} | confidence: {cni_confidence} | cluster footprint: {cluster_footprint} | capability: {capability_summary} | policy: {policy_label}"
+        f"CNI: {cni_name or 'unknown'} | state: {cni_classification_state} | confidence: {cni_confidence} | cluster footprint: {cluster_footprint} | capability: {capability_summary} | policy: {policy_label}"
     )
     if (
         reconciliation == "single_source"
@@ -295,6 +296,8 @@ def format_cni_detection_evidence(state: dict) -> str:
     capabilities = detection.get("capabilities", {})
     cluster_footprint = detection.get("cluster_footprint", {})
     calico_runtime = detection.get("calico_runtime", {})
+    classification = detection.get("classification", {})
+    provenance = detection.get("provenance", {})
     policy_presence = detection.get("policy_presence", {})
     version = detection.get("version", {})
     config_spec_version = detection.get("config_spec_version", {})
@@ -352,6 +355,19 @@ def format_cni_detection_evidence(state: dict) -> str:
         f"operator present: {cluster_footprint.get('operator_present', False)}\n"
         f"daemonset count: {cluster_footprint.get('daemonset_count', 0)}\n"
         f"daemonsets: {json.dumps(cluster_footprint.get('daemonsets', []), indent=2)}\n\n"
+        "[normalized classification]\n"
+        f"state: {classification.get('state', 'unknown')}\n"
+        f"reason: {classification.get('reason', 'unknown')}\n"
+        f"notes: {json.dumps(classification.get('notes', []), indent=2)}\n"
+        f"previous detected cni: {classification.get('previous_detected_cni', 'unknown')}\n\n"
+        "[provenance]\n"
+        f"available: {provenance.get('available', False)}\n"
+        f"current detected cni: {provenance.get('current_detected_cni', 'unknown')}\n"
+        f"previous detected cni: {provenance.get('previous_detected_cni', 'unknown')}\n"
+        f"last cleaned at: {provenance.get('last_cleaned_at', '') or '(unknown)'}\n"
+        f"cleaned by: {provenance.get('cleaned_by', '') or '(unknown)'}\n"
+        f"last install observed at: {provenance.get('last_install_observed_at', '') or '(unknown)'}\n"
+        f"evidence basis: {provenance.get('evidence_basis', 'unknown')}\n\n"
         "[calico runtime evidence]\n"
         f"summary: {calico_runtime.get('summary', 'not applicable for current CNI')}\n"
         f"status: {calico_runtime.get('status', 'unknown')}\n"
@@ -831,6 +847,8 @@ cni_confidence = cni_evidence.get("confidence", "unknown")
 cni_config_spec_ui = cni_config_spec_display(state)
 cni_capability = cni_evidence.get("capabilities", {}).get("summary", "unknown")
 cni_policy_status = cni_evidence.get("policy_presence", {}).get("status", "unknown")
+cni_classification = cni_evidence.get("classification", {})
+cni_provenance = cni_evidence.get("provenance", {})
 cni_policy_label = {
     "present": "present",
     "absent": "none detected",
@@ -865,6 +883,7 @@ with st.container(border=True):
         with summary_col1:
             st.markdown("**Interpreted Summary**")
             st.write(f"CNI: {cni_name}")
+            st.write(f"Classification: {cni_classification.get('state', 'unknown')}")
             st.write(f"Capability: {cni_capability}")
             st.write(f"Policy: {cni_policy_label}")
 
@@ -884,6 +903,21 @@ with st.container(border=True):
             st.write(f"Execution: {selected_layer['exec_type']}")
 
         st.caption(f"Suggested debug entry point: `{selected_layer['api']}`")
+        st.caption(f"Why this classification: {cni_classification.get('reason', 'unknown')}")
+        if cni_classification.get("notes"):
+            st.caption("Supporting notes: " + " ".join(cni_classification.get("notes", [])))
+        if cni_provenance.get("available"):
+            st.caption(
+                "Provenance: current="
+                f"{cni_provenance.get('current_detected_cni', 'unknown')}, previous="
+                f"{cni_provenance.get('previous_detected_cni', 'unknown')}, cleaned_by="
+                f"{cni_provenance.get('cleaned_by', '') or '(unknown)'}, last_cleaned_at="
+                f"{cni_provenance.get('last_cleaned_at', '') or '(unknown)'}"
+            )
+        else:
+            st.caption(
+                "Provenance: no in-cluster provenance record found; current/previous state is inferred from live evidence only."
+            )
         if cni_partial_uninstall_warning:
             st.warning(
                 "Cluster-level components for this CNI are absent, but host/node CNI config still "
