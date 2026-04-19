@@ -284,6 +284,12 @@ def _build_cleanup_lesson(state: Dict[str, Any]) -> Dict[str, Any]:
         interface_commands = ["ip link show"]
         for iface in interfaces[:4]:
             interface_commands.append(f"sudo ip link delete {iface}")
+    interface_observed = "No stale CNI interfaces detected."
+    if stale_interfaces_detected:
+        display_names = ", ".join(f"{iface} (may appear as {iface}@NONE in `ip link show`)" for iface in interfaces[:3])
+        interface_observed = (
+            f"Stale interfaces detected: {display_names}. Use the base interface name when deleting it."
+        )
     step_interfaces = {
         "id": "remove_stale_interfaces",
         "title": "Clean up leftover CNI interfaces",
@@ -299,11 +305,7 @@ def _build_cleanup_lesson(state: Dict[str, Any]) -> Dict[str, Any]:
         "commands": interface_commands,
         "verification": "Re-check node interfaces and confirm stale CNI-specific links are gone.",
         "status": step_interface_status,
-        "observed": (
-            stale_interfaces.get("summary", "No stale CNI interfaces detected.")
-            if stale_interfaces_detected
-            else "No stale CNI interfaces detected."
-        ),
+        "observed": interface_observed,
     }
 
     step_verify_status = "completed" if baseline_ready else ("ready" if not mixed_or_transitional else "in_progress")
