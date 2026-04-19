@@ -162,16 +162,43 @@ class TestLessons(unittest.TestCase):
         state["evidence"]["cni"]["classification"]["state"] = "stale_interfaces"
         state["evidence"]["cni"]["classification"]["stale_interfaces"] = {
             "detected": True,
-            "interfaces": ["tunl0"],
-            "summary": "stale interfaces detected (tunl0)",
+            "interfaces": ["tunl0", "cilium_host"],
+            "summary": "stale interfaces detected (tunl0, cilium_host)",
         }
-        state["runtime"]["network"] = "33: tunl0@NONE: <NOARP,UP,LOWER_UP> mtu 1440"
+        state["runtime"]["network"] = (
+            "3: cilium_net@cilium_host: <BROADCAST,MULTICAST,NOARP,UP,LOWER_UP> mtu 1460\n"
+            "4: cilium_host@cilium_net: <BROADCAST,MULTICAST,NOARP,UP,LOWER_UP> mtu 1460\n"
+            "5: cilium_vxlan: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1460\n"
+            "16: tunl0@NONE: <NOARP,UP,LOWER_UP> mtu 1440\n"
+        )
 
         progress = lessons.default_lesson_progress()
         progress.update({"inspect_ran": True, "classify_ran": True, "scripts_generated": True, "current_step": 2})
         lesson = lessons.build_lesson_run("reset_networking_lab", state, progress)
 
         self.assertIn("sudo ip link delete tunl0", lesson["remediation_scripts"]["cp"]["content"])
+        self.assertIn("sudo ip link delete cilium_host", lesson["remediation_scripts"]["cp"]["content"])
+        self.assertIn("sudo ip link delete cilium_net", lesson["remediation_scripts"]["cp"]["content"])
+        self.assertIn("sudo ip link delete cilium_vxlan", lesson["remediation_scripts"]["cp"]["content"])
+
+    def test_script_moves_aside_common_residual_cni_configs(self):
+        state = _base_state()
+        state["evidence"]["cni"]["classification"]["state"] = "stale_interfaces"
+        state["evidence"]["cni"]["classification"]["stale_interfaces"] = {
+            "detected": True,
+            "interfaces": ["tunl0"],
+            "summary": "stale interfaces detected (tunl0)",
+        }
+
+        progress = lessons.default_lesson_progress()
+        progress.update({"inspect_ran": True, "classify_ran": True, "scripts_generated": True, "current_step": 2})
+        lesson = lessons.build_lesson_run("reset_networking_lab", state, progress)
+
+        script = lesson["remediation_scripts"]["cp"]["content"]
+        self.assertIn('/etc/cni/net.d/10-calico.conflist', script)
+        self.assertIn('/etc/cni/net.d/calico-kubeconfig', script)
+        self.assertIn('/etc/cni/net.d/05-cilium.conflist', script)
+        self.assertIn("Phase 2: move aside residual CNI config files", script)
 
     def test_cleanup_lesson_keeps_local_cleanup_target_when_hostname_does_not_match_node_name(self):
         state = _base_state()
