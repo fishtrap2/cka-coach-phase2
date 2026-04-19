@@ -175,6 +175,18 @@ class TestLessons(unittest.TestCase):
         self.assertIn("student-lab-host", lesson["cleanup_target_nodes"])
         self.assertIn("student-lab-host", lesson["remediation_scripts"])
 
+    def test_resolve_local_node_prefers_internal_ip_match_over_hostname(self):
+        state = _base_state()
+        state["runtime"]["hostname"] = "lfs258.master"
+        state["runtime"]["network"] = (
+            "2: ens4: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1460\n"
+            "    inet 10.2.0.2/32 metric 100 scope global dynamic ens4\n"
+        )
+
+        resolved = lessons._resolve_local_node(["cp", "worker1"], state["runtime"])
+
+        self.assertEqual(resolved, "cp")
+
 
 if __name__ == "__main__":
     unittest.main()

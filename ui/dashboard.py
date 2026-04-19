@@ -1286,6 +1286,10 @@ if lesson_run:
                         "These scripts are generated for review in the lesson screen only. "
                         "cka-coach is not writing them to disk automatically."
                     )
+                    if len(scripts) > 1:
+                        st.markdown("**Run these next**")
+                        for idx, node_name in enumerate(scripts.keys(), start=1):
+                            st.write(f"{idx}. Run `cleanup-cni-residuals-{node_name}.sh` on node `{node_name}`")
                     for node_name, script in scripts.items():
                         st.markdown(f"**{script.get('filename', node_name)}**")
                         st.caption(script.get("summary", ""))

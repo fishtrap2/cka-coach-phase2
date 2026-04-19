@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+import re
 from typing import Any, Dict, List
 
 
@@ -193,7 +194,61 @@ def _parse_node_names(runtime: Dict[str, Any]) -> List[str]:
     return [line.split()[0] for line in data_lines if line.split()]
 
 
+def _parse_node_inventory(runtime: Dict[str, Any]) -> List[Dict[str, str]]:
+    inventory: List[Dict[str, str]] = []
+    nodes_json = runtime.get("nodes_json", "")
+    if nodes_json.strip():
+        try:
+            import json
+
+            data = json.loads(nodes_json)
+            for item in data.get("items", []):
+                addresses = item.get("status", {}).get("addresses", []) or []
+                internal_ip = next(
+                    (entry.get("address", "") for entry in addresses if entry.get("type") == "InternalIP"),
+                    "",
+                )
+                inventory.append(
+                    {
+                        "name": item.get("metadata", {}).get("name", ""),
+                        "internal_ip": internal_ip,
+                    }
+                )
+        except Exception:
+            inventory = []
+
+    if inventory and any(entry.get("internal_ip") for entry in inventory):
+        return [entry for entry in inventory if entry.get("name")]
+
+    nodes_text = runtime.get("nodes", "")
+    lines = [line for line in nodes_text.splitlines() if line.strip()]
+    data_lines = lines[1:] if len(lines) > 1 else []
+    for line in data_lines:
+        parts = line.split()
+        if len(parts) >= 6:
+            inventory.append(
+                {
+                    "name": parts[0],
+                    "internal_ip": parts[5],
+                }
+            )
+    return inventory
+
+
+def _parse_local_ipv4s(runtime: Dict[str, Any]) -> List[str]:
+    network_text = runtime.get("network", "")
+    ips = re.findall(r"\binet (\d+\.\d+\.\d+\.\d+)", network_text)
+    return [ip for ip in ips if not ip.startswith("127.") and not ip.startswith("172.17.")]
+
+
 def _resolve_local_node(node_names: List[str], runtime: Dict[str, Any]) -> str:
+    inventory = _parse_node_inventory(runtime)
+    local_ips = _parse_local_ipv4s(runtime)
+    for ip in local_ips:
+        for entry in inventory:
+            if entry.get("internal_ip") == ip and entry.get("name"):
+                return entry["name"]
+
     hostname = (runtime.get("hostname", "") or "").strip()
     if not hostname:
         return ""
