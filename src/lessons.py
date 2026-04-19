@@ -196,6 +196,7 @@ def _build_cleanup_lesson(state: Dict[str, Any]) -> Dict[str, Any]:
         ),
         "coach_can_do": True,
         "student_must_do": False,
+        "run_on": "Coach / cluster scan",
         "commands": [],
         "verification": "Current classification and residual signals are present in the lesson state.",
         "status": step_inspect_status,
@@ -239,6 +240,7 @@ def _build_cleanup_lesson(state: Dict[str, Any]) -> Dict[str, Any]:
         ),
         "coach_can_do": False,
         "student_must_do": True,
+        "run_on": "Node: any affected node with stale CNI config",
         "commands": step_config_commands,
         "verification": (
             "Re-check that the old config file is gone from the active CNI directory and that "
@@ -267,6 +269,7 @@ def _build_cleanup_lesson(state: Dict[str, Any]) -> Dict[str, Any]:
         ),
         "coach_can_do": False,
         "student_must_do": True,
+        "run_on": "Cluster: use kubectl from any admin shell with cluster access",
         "commands": taint_commands,
         "verification": "Re-check nodes and confirm no stale CNI-specific taints remain.",
         "status": step_taint_status,
@@ -302,6 +305,7 @@ def _build_cleanup_lesson(state: Dict[str, Any]) -> Dict[str, Any]:
         ),
         "coach_can_do": False,
         "student_must_do": True,
+        "run_on": "Node: the node where the stale interface was observed",
         "commands": interface_commands,
         "verification": "Re-check node interfaces and confirm stale CNI-specific links are gone.",
         "status": step_interface_status,
@@ -322,6 +326,7 @@ def _build_cleanup_lesson(state: Dict[str, Any]) -> Dict[str, Any]:
         ),
         "coach_can_do": True,
         "student_must_do": False,
+        "run_on": "Coach / cluster re-scan",
         "commands": [],
         "verification": (
             "Classification should move out of stale/transitional states and residual taints/interfaces "

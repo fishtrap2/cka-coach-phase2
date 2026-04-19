@@ -1178,6 +1178,9 @@ if lesson_run:
                 observed = active_step.get("observed", "")
                 if observed:
                     st.caption(f"Observed right now: {observed}")
+                run_on = active_step.get("run_on", "")
+                if run_on:
+                    st.caption(f"Run on: {run_on}")
 
                 commands = active_step.get("commands", [])
                 if commands:
