@@ -88,7 +88,7 @@ def map_to_els(state: dict):
 
         # Example keys:
         #   L8 application_pods
-        #   L6.5 api_layer
+        #   L4.5 api_layer
         #   L4 node_agents_and_networking
         key = f"L{layer_id} {layer_name}"
 
@@ -113,9 +113,9 @@ def map_to_els(state: dict):
                 k8s_json,
             ])
 
-        # L6.5 = API server and etcd layer.
+        # L4.5 = API server and etcd layer.
         # Best evidence today: API version/info plus k8s JSON.
-        elif layer_id == "6.5":
+        elif layer_id == "4.5":
             result[key] = _join_parts([
                 api,
                 k8s_json,

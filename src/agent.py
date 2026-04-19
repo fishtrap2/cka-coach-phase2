@@ -297,7 +297,7 @@ def choose_primary_els_layer(question: str, normalized_state: dict) -> tuple[str
 
     # Questions about the apiserver / etcd / REST API go to the API layer.
     if "api server" in q or "apiserver" in q or "etcd" in q or "rest api" in q:
-        return "L6.5 api_layer", "6.5"
+        return "L4.5 api_layer", "4.5"
 
     # Scheduler / controllers / control plane questions generally map to controllers.
     if "scheduler" in q or "controller" in q or "control plane" in q:
@@ -428,7 +428,7 @@ def _build_generic_guided_plan(layer_num: str, layer_name: str, mapped_context: 
     titles = {
         "8": "Validate current pod state",
         "7": "Inspect the desired-state object first",
-        "6.5": "Confirm API/control-plane reachability",
+        "4.5": "Confirm API/control-plane reachability",
         "6": "Inspect the operator control loop",
         "5": "Check reconciliation behavior closest to the symptom",
         "4": "Inspect the active node boundary first",

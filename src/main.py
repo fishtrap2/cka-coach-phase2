@@ -26,7 +26,7 @@ def layers():
 
     Output example:
       4 - node_agents_and_networking
-      6.5 - api_layer
+      4.5 - api_layer
     """
     for layer_id, layer in ELS_LAYERS.items():
         print(f"[bold]{layer_id}[/bold] - {layer['name']}")

@@ -82,6 +82,35 @@ body {
     padding-left: 10px;
     white-space: pre-wrap;
 }
+
+.family-legend {
+    display: flex;
+    gap: 12px;
+    margin: 8px 0 10px;
+    flex-wrap: wrap;
+    font-size: 12px;
+}
+
+.family-chip {
+    padding: 4px 10px;
+    border-radius: 999px;
+    border: 1px solid #1f2937;
+}
+
+.family-blue {
+    background: #0b2a4a;
+    color: #93c5fd;
+}
+
+.family-green {
+    background: #12351d;
+    color: #86efac;
+}
+
+.family-orange {
+    background: #4a2a0b;
+    color: #fdba74;
+}
 </style>
 """
 
@@ -152,6 +181,20 @@ def render_guided_plan(plan):
         st.markdown(f"Interpretation: {step.get('interpretation', '')}")
 
 
+def layer_family(key: str) -> str:
+    if key in {"L9", "L8", "L7"}:
+        return "blue"
+    if key in {"L6", "L5", "L4.5"}:
+        return "green"
+    return "orange"
+
+
+def summarize_current_evidence(state: dict, key: str) -> str:
+    summary = summarize(state)
+    current, _ = summary.get(key, ("...", True))
+    return current
+
+
 def summarize(state: dict) -> dict:
     """
     Build the "Current" summary values shown in the ELS table.
@@ -214,7 +257,7 @@ def summarize(state: dict) -> dict:
     }.get(policy_status, policy_status)
 
     cni_summary_text = (
-        f"CNI: {cni_name or 'unknown'} | state: {cni_classification_state} | confidence: {cni_confidence} | cluster footprint: {cluster_footprint} | capability: {capability_summary} | policy: {policy_label}"
+        f"{cni_name or 'unknown'} | {cni_classification_state} | {cni_confidence} confidence | {cluster_footprint}"
     )
     if (
         reconciliation == "single_source"
@@ -222,9 +265,13 @@ def summarize(state: dict) -> dict:
         and cluster_level_cni in {"", "unknown"}
     ):
         cni_summary_text = (
-            f"CNI: {cni_name or 'unknown'} | confidence: {cni_confidence} | "
-            f"cluster evidence missing, node config still indicates {node_level_cni} | "
-            f"capability: {capability_summary} | policy: {policy_label}"
+            f"{cni_name or 'unknown'} | {cni_confidence} confidence | "
+            f"cluster missing, node config says {node_level_cni}"
+        )
+    elif reconciliation == "conflict":
+        cni_summary_text = (
+            f"{cni_name or 'unknown'} | {cni_classification_state} | "
+            f"cluster {cluster_level_cni or 'unknown'} vs node {node_level_cni or 'unknown'}"
         )
 
     if kubelet_ok is True:
@@ -250,22 +297,22 @@ def summarize(state: dict) -> dict:
         containerd_text = "containerd status unknown"
 
     return {
-        "L9": ("User workloads", True),
+        "L9": ("User workloads present", True),
         "L8": (
-            f"{total_pods} pods | default={default_pods} | kube-system={kube_system_pods}"
+            f"{total_pods} pods | default {default_pods} | kube-system {kube_system_pods}"
             + (f" | Pending={pending_pods}" if pending_pods else "")
             + (f" | CrashLoop={crashloop_pods}" if crashloop_pods else ""),
             not (health.get("pods_pending", False) or health.get("pods_crashloop", False)),
         ),
-        "L7": ("Desired state via API objects", True),
-        "L6.5": (f"API server / etcd | {api_ver or 'unknown'}", True),
+        "L7": ("Desired-state objects in API", True),
+        "L4.5": (f"API server / etcd | {api_ver or 'unknown'}", True),
         "L6": (
-            f"Operator-style pods: {operator_preview}"
+            f"Operator pods: {operator_preview}"
             + (f" | count={len(operator_pods)}" if operator_pods else ""),
             True,
         ),
         "L5": (
-            f"Core controllers / daemonsets: {daemonset_count} observed | {daemonset_preview}",
+            f"Controllers / daemonsets: {daemonset_count} observed | {daemonset_preview}",
             True,
         ),
         "L4.1": (kubelet_text, kubelet_ok is True),
@@ -291,9 +338,9 @@ def map_versions_to_layers(state: dict) -> dict:
         "L9": "",
         "L8": "",
         "L7": v.get("api", ""),
-        "L6.5": v.get("api", ""),
         "L6": v.get("api", ""),
         "L5": v.get("api", ""),
+        "L4.5": v.get("api", ""),
         "L4.1": v.get("kubelet", ""),
         "L4.2": v.get("api", ""),
         "L4.3": (
@@ -451,7 +498,7 @@ def get_expand_text(key: str, state: dict) -> str:
     mapping = {
         "L8": runtime.get("pods", ""),
         "L7": runtime.get("events", ""),
-        "L6.5": versions.get("k8s_json", ""),
+        "L4.5": versions.get("k8s_json", ""),
         "L5": runtime.get("processes", ""),
         "L4.1": runtime.get("kubelet", ""),
         "L4.2": runtime.get("nodes", ""),
@@ -724,7 +771,7 @@ def _layer_debug_commands(key: str):
     entry points than the base schema currently provides.
     """
     overrides = {
-        "L6.5": ["kubectl cluster-info", "kubectl get componentstatuses", "crictl ps | grep kube-apiserver"],
+        "L4.5": ["kubectl cluster-info", "kubectl get componentstatuses", "crictl ps | grep kube-apiserver"],
         "L5": ["kubectl get events", "kubectl describe deployment <name>", "kubectl get ds -A"],
         "L4.1": ["systemctl status kubelet", "journalctl -u kubelet"],
         "L4.2": ["kubectl get pods -n kube-system -l k8s-app=kube-proxy", "iptables -L -n -v"],
@@ -747,9 +794,9 @@ layers = [
     ("9", "Applications", "User-facing application logic such as app binaries, web servers, APIs, and background workers running inside containers.", "application processes living inside containers", "user_process", _layer_debug_commands("L9"), "L9"),
     ("8", "Pods", "Pod abstraction wrapping one or more containers, restart policy, IP identity, and scheduling placement on nodes.", "kubelet-managed containers on nodes", "abstraction/meta", _layer_debug_commands("L8"), "L8"),
     ("7", "K8S Objects", "Desired-state resources stored in the API server such as Deployments, Services, ConfigMaps, Secrets, and NetworkPolicies.", "Persistent state (etcd via kube-apiserver)", "data", _layer_debug_commands("L7"), "L7"),
-    ("6.5", "K8S API Layer", "Kubernetes API server and etcd as the cluster state entrypoint, persistence layer, and control-plane contract boundary.", "control-plane node (containers or processes)", "long_running_daemon", _layer_debug_commands("L6.5"), "L6.5"),
     ("6", "Operators", "Custom controllers with domain-specific logic, often shipped by platforms like Cilium, Calico, databases, and observability stacks.", "pods in cluster", "long_running_daemon", _layer_debug_commands("L6"), "L6"),
     ("5", "Controllers", "Core reconciliation loops such as kube-controller-manager, plus examples like Deployments, ReplicaSets, Jobs, and DaemonSets being continuously reconciled.", "kube-controller-manager static pod", "long_running_daemon", _layer_debug_commands("L5"), "L5"),
+    ("4.5", "K8S API Layer", "Kubernetes API server and etcd as the cluster source of truth and control-plane entry boundary.", "control-plane node (containers or processes)", "long_running_daemon", _layer_debug_commands("L4.5"), "L4.5"),
     ("4.1", "kubelet", "Node-level control agent that watches PodSpecs and makes sure containers, volumes, probes, and restarts happen on each node.", "workers and control-plane nodes' systemd/PID1", "long_running_system_service", _layer_debug_commands("L4.1"), "L4.1"),
     ("4.2", "kube-proxy", "Service networking and virtual IP routing for Pods, unless some of that behavior is replaced by the active CNI dataplane.", "kube-system pod (or replaced by CNI dataplane)", "long_running_daemon", _layer_debug_commands("L4.2"), "L4.2"),
     ("4.3", "cni", "Container Network Interface plugin and node networking glue that wires pod networking, interfaces, routes, and policy-capable dataplanes.", "short-lived execution on node to wire pod networking", "short_lived_executable", _layer_debug_commands("L4.3"), "L4.3"),
@@ -788,7 +835,7 @@ def layer_status(key: str, health: dict):
         return health.get("pods_ok")
     if key == "L7":
         return health.get("api_access_ok")
-    if key == "L6.5":
+    if key == "L4.5":
         return health.get("api_access_ok")
     if key == "L6":
         return health.get("api_access_ok")
@@ -828,15 +875,21 @@ for lvl, name, description, lives, exec_type, api, key in layers:
     # 🟡 = unknown / visibility-limited (NEW default for Phase 1 container mode)
 
     status = layer_status(key, health)
+    family = layer_family(key)
+    family_base = {
+        "blue": {"healthy": "#102742", "warn": "#20344d", "bad": "#3b1d24"},
+        "green": {"healthy": "#10311a", "warn": "#274023", "bad": "#3d221d"},
+        "orange": {"healthy": "#2a220c", "warn": "#3f3113", "bad": "#4a1f12"},
+    }[family]
 
-    row_color = "#332200"
+    row_color = family_base["warn"]
     health_icon = "🟡"
 
     if status is True or status == "healthy":
-        row_color = "#001100"
+        row_color = family_base["healthy"]
         health_icon = "🟢"
     elif status is False or status == "degraded":
-        row_color = "#220000"
+        row_color = family_base["bad"]
         health_icon = "🔴"
 
     # --- everything else stays AMBER ---
@@ -875,6 +928,15 @@ table_html += f"""
 
 st.html(table_html)
 st.caption(f"Last refresh: {datetime.now().strftime('%H:%M:%S')}")
+st.html(
+    """
+    <div class="family-legend">
+      <div class="family-chip family-blue">Blue = applications / desired state</div>
+      <div class="family-chip family-green">Green = reconciliation / source of truth</div>
+      <div class="family-chip family-orange">Brown = node / runtime / dataplane</div>
+    </div>
+    """
+)
 st.warning(
     "Running in container mode: host-level checks (e.g. kubelet, systemctl) may be unavailable. "
     "Cluster API access requires kubeconfig or in-cluster credentials."

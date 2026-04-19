@@ -31,7 +31,7 @@ layers:
     description: Desired state definitions stored in API server
     lives: etcd via kube-apiserver
     execution_type: data
-    depends_on: [6.5]
+    depends_on: [4.5]
     primary_interfaces:
       - kubectl
       - kube-apiserver
@@ -40,7 +40,7 @@ layers:
       - kubectl describe <resource>
       - kubectl get events
 
-  - id: "6.5"
+  - id: "4.5"
     name: api_layer
     description: Kubernetes API server and etcd (state store)
     lives: control-plane node (containers or processes)
@@ -58,7 +58,7 @@ layers:
     description: Custom controllers with domain-specific logic
     lives: pods in cluster
     execution_type: long_running_daemon
-    depends_on: [7,6.5]
+    depends_on: [7,4.5]
     primary_interfaces:
       - kube-apiserver
     debug_commands:
@@ -70,7 +70,7 @@ layers:
     description: Core reconciliation loops (deployment, replicaset, node)
     lives: kube-controller-manager
     execution_type: long_running_daemon
-    depends_on: [6.5]
+    depends_on: [4.5]
     primary_interfaces:
       - kube-apiserver
     debug_commands:
