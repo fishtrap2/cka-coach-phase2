@@ -9,6 +9,23 @@ import lessons
 
 def _base_state() -> dict:
     return {
+        "runtime": {
+            "hostname": "cp",
+            "nodes": (
+                "NAME STATUS ROLES AGE VERSION INTERNAL-IP EXTERNAL-IP OS-IMAGE KERNEL-VERSION CONTAINER-RUNTIME\n"
+                "cp Ready control-plane 58d v1.33.1 10.2.0.2 <none> Ubuntu 24.04 6.17.0 containerd://2.2.1\n"
+                "worker1 Ready <none> 58d v1.33.1 10.2.0.3 <none> Ubuntu 24.04 6.17.0 containerd://2.2.1\n"
+            ),
+            "nodes_json": (
+                '{"items": ['
+                '{"metadata": {"name": "cp"}},'
+                '{"metadata": {"name": "worker1"}}'
+                "]}"
+            ),
+            "pods": "",
+            "network": "",
+            "iptables": "",
+        },
         "versions": {"cni": "unknown"},
         "summary": {"versions": {"cni": "unknown"}},
         "evidence": {
@@ -61,7 +78,20 @@ class TestLessons(unittest.TestCase):
             "Calico daemonset/runtime evidence is present with no conflicting CNI signal."
         )
 
-        lesson = lessons.build_lesson_run("reset_networking_lab", state)
+        progress = lessons.default_lesson_progress()
+        progress.update(
+            {
+                "inspect_ran": True,
+                "classify_ran": True,
+                "scripts_generated": True,
+                "student_confirmed": True,
+                "recheck_ran": True,
+                "baseline_confirmed": True,
+                "current_step": 5,
+            }
+        )
+
+        lesson = lessons.build_lesson_run("reset_networking_lab", state, progress)
 
         self.assertTrue(lesson["baseline_ready"])
         self.assertEqual(lesson["status"], "completed")
@@ -83,10 +113,16 @@ class TestLessons(unittest.TestCase):
 
         lesson = lessons.build_lesson_run("reset_networking_lab", state)
 
-        self.assertEqual(lesson["status"], "needs_student_action")
-        self.assertEqual(lesson["steps"][1]["status"], "needs_student_action")
-        self.assertIn("sudo mv", "\n".join(lesson["steps"][1]["commands"]))
+        self.assertEqual(lesson["status"], "paused")
+        self.assertEqual(lesson["steps"][0]["status"], "waiting_for_coach")
+        self.assertIn("cp", lesson["cleanup_target_nodes"])
         self.assertFalse(lesson["baseline_ready"])
+
+        progress = lessons.default_lesson_progress()
+        progress.update({"inspect_ran": True, "classify_ran": True, "scripts_generated": True, "current_step": 3})
+        lesson = lessons.build_lesson_run("reset_networking_lab", state, progress)
+        self.assertEqual(lesson["steps"][3]["status"], "waiting_for_student")
+        self.assertIn("cp", lesson["steps"][3]["target_nodes"])
 
     def test_cleanup_lesson_requires_student_action_for_stale_taint(self):
         state = _base_state()
@@ -97,10 +133,29 @@ class TestLessons(unittest.TestCase):
             "summary": "stale taints detected (1)",
         }
 
+        progress = lessons.default_lesson_progress()
+        progress.update({"inspect_ran": True, "classify_ran": True, "scripts_generated": True, "current_step": 2})
+        lesson = lessons.build_lesson_run("reset_networking_lab", state, progress)
+
+        self.assertIn("cp", lesson["cleanup_target_nodes"])
+        self.assertIn("cp", lesson["remediation_scripts"]["cp"]["content"])
+        self.assertIn("kubectl taint nodes cp", lesson["remediation_scripts"]["cp"]["content"])
+
+    def test_cleanup_lesson_per_node_status_marks_local_residue(self):
+        state = _base_state()
+        state["evidence"]["cni"]["classification"]["state"] = "stale_interfaces"
+        state["evidence"]["cni"]["classification"]["stale_interfaces"] = {
+            "detected": True,
+            "interfaces": ["tunl0"],
+            "summary": "stale interfaces detected (tunl0)",
+        }
+        state["runtime"]["network"] = "33: tunl0@NONE: <NOARP,UP,LOWER_UP> mtu 1440"
+
         lesson = lessons.build_lesson_run("reset_networking_lab", state)
 
-        self.assertEqual(lesson["steps"][2]["status"], "needs_student_action")
-        self.assertIn("kubectl taint nodes cp node.cilium.io/agent-not-ready-", lesson["steps"][2]["commands"])
+        local_entry = next(entry for entry in lesson["per_node_status"] if entry["node"] == "cp")
+        self.assertTrue(local_entry["cleanup_required"])
+        self.assertIn("stale_interfaces", local_entry["residue_types"])
 
 
 if __name__ == "__main__":

@@ -101,6 +101,17 @@ def _safe_ip(command: str) -> str:
     return _run_command(command)
 
 
+def _safe_iptables_save() -> str:
+    """
+    Return local iptables-save output when available.
+    """
+    if _command_exists("iptables-save"):
+        return _run_command("iptables-save")
+    if _command_exists("iptables"):
+        return _run_command("iptables -S")
+    return "iptables tooling not installed or not on PATH"
+
+
 def _safe_uname() -> str:
     """
     Return kernel information.
@@ -1496,6 +1507,8 @@ def collect_state(
     # These fields are meant to capture "what is happening now" across
     # Kubernetes, node agents, networking, and container runtime.
     runtime = {
+        "hostname": _run_command("hostname"),
+
         # Pod-level view for L8 application_pods
         "pods": _safe_kubectl("kubectl get pods -A -o wide"),
 
@@ -1523,6 +1536,9 @@ def collect_state(
 
         # routing table
         "routes": _safe_ip("ip route"),
+
+        # local iptables/ipset clues for dataplane residue checks
+        "iptables": _safe_iptables_save(),
 
         # cluster policy objects
         "network_policies": _safe_kubectl("kubectl get networkpolicy -A"),
