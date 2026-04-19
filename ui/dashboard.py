@@ -12,6 +12,14 @@ from dashboard_presenters import cni_config_spec_display
 from agent import ask_llm
 from command_boundaries import format_boundary_commands_html, format_boundary_commands_text
 from els_model import ELS_LAYERS
+from lessons import (
+    append_coach_activity,
+    build_lesson_run,
+    ensure_initial_lesson_activity,
+    lesson_catalog,
+    step_status_badge,
+    step_status_icon,
+)
 
 ALLOW_HOST_EVIDENCE = "--allow-host-evidence" in sys.argv[1:]
 
@@ -221,6 +229,16 @@ def render_guided_plan(plan):
             for command in commands:
                 st.code(command, language="bash")
         st.markdown(f"Interpretation: {step.get('interpretation', '')}")
+
+
+def render_lesson_step_tracker(steps, current_step_index: int):
+    for idx, step in enumerate(steps, start=1):
+        status = step.get("status", "not_started")
+        prefix = "👉 " if idx - 1 == current_step_index and status != "completed" else ""
+        st.markdown(
+            f"{prefix}{step_status_icon(status)} **Step {idx}: {step.get('title', '')}**"
+            f"  \n{step_status_badge(status)}"
+        )
 
 
 def layer_family(key: str) -> str:
@@ -804,6 +822,11 @@ with st.spinner("Collecting state..."):
 summary = summarize(state)
 versions_map = map_versions_to_layers(state)
 health = state.get("health", {})
+lesson_repo = lesson_catalog()
+available_lessons = [lesson for lesson in lesson_repo if lesson.get("available")]
+
+if available_lessons and "active_lesson_id" not in st.session_state:
+    st.session_state["active_lesson_id"] = available_lessons[0]["id"]
 
 
 def _layer_debug_commands(key: str):
@@ -1018,6 +1041,204 @@ st.warning(
 st.warning(
     "KEY: 🟢 = healthy; 🔴 = degraded/unhealthy; 🟡 = unknown / visibility-limited (NEW default for Phase 1 container mode)"
 )
+
+# --------------------------
+# Active Lesson / Coaching Console
+# --------------------------
+st.divider()
+st.markdown("## Active Lesson / Coaching Console")
+st.caption(
+    "Stay in one guided learning screen: choose a lesson, follow the coach, run commands, and let cka-coach re-check progress against live cluster evidence."
+)
+
+with st.expander("Lessons / available lessons", expanded=False):
+    if available_lessons:
+        selected_lesson_id = st.radio(
+            "Available lessons",
+            options=[lesson["id"] for lesson in available_lessons],
+            index=next(
+                (
+                    i
+                    for i, lesson in enumerate(available_lessons)
+                    if lesson["id"] == st.session_state.get("active_lesson_id")
+                ),
+                0,
+            ),
+            format_func=lambda lesson_id: next(
+                (
+                    lesson["title"]
+                    for lesson in available_lessons
+                    if lesson["id"] == lesson_id
+                ),
+                lesson_id,
+            ),
+            key="active_lesson_id",
+        )
+        selected_lesson_meta = next(
+            lesson for lesson in available_lessons if lesson["id"] == selected_lesson_id
+        )
+        st.caption(selected_lesson_meta.get("description", ""))
+    else:
+        selected_lesson_id = ""
+        st.info("No lessons are available yet.")
+
+    upcoming_lessons = [lesson for lesson in lesson_repo if not lesson.get("available")]
+    if upcoming_lessons:
+        st.markdown("**Coming soon**")
+        for lesson in upcoming_lessons:
+            st.write(f"- {lesson['title']}: {lesson['description']}")
+
+lesson_run = build_lesson_run(st.session_state.get("active_lesson_id", ""), state) if available_lessons else {}
+if lesson_run:
+    ensure_initial_lesson_activity(st.session_state, lesson_run["id"], lesson_run)
+    lesson_steps = lesson_run.get("steps", [])
+    current_step_index = lesson_run.get("current_step", 0)
+    active_step = lesson_steps[current_step_index] if lesson_steps else {}
+    lesson_activity = st.session_state.get(f"lesson_activity_{lesson_run['id']}", [])
+    lesson_notes_key = f"lesson_notes_{lesson_run['id']}"
+    lesson_input_key = f"lesson_note_input_{lesson_run['id']}"
+
+    coach_col, student_col = st.columns([1.2, 1], gap="large")
+
+    with coach_col:
+        with st.container(border=True):
+            st.markdown("### Coach")
+            st.markdown("**What we are doing overall**")
+            st.write(lesson_run.get("overall_summary", ""))
+            st.caption(lesson_run.get("why_it_matters", ""))
+
+            progress_fraction = lesson_run.get("completion_percentage", 0) / 100
+            st.progress(progress_fraction)
+            st.caption(f"{lesson_run.get('completion_percentage', 0)}% complete")
+
+            st.markdown("**Current position in the lesson**")
+            st.write(lesson_run.get("current_position_summary", ""))
+            render_lesson_step_tracker(lesson_steps, current_step_index)
+
+            st.markdown("**Next step guidance**")
+            if active_step:
+                actor = (
+                    "Student does this"
+                    if active_step.get("student_must_do")
+                    else "Coach can do this"
+                )
+                st.write(f"{active_step.get('title', '')} — {actor}")
+                st.caption(active_step.get("why", ""))
+                st.write(active_step.get("instructions", ""))
+                st.caption(f"Verification: {active_step.get('verification', '')}")
+            else:
+                st.success("This lesson is complete.")
+
+            recheck_col, refresh_col = st.columns([1, 1])
+            if recheck_col.button("Coach re-check lesson progress", key=f"lesson_recheck_{lesson_run['id']}"):
+                append_coach_activity(
+                    st.session_state,
+                    lesson_run["id"],
+                    "Re-scanned lesson evidence",
+                    "Verify whether the active lesson step is now complete.",
+                    (
+                        f"Classification is {lesson_run.get('classification', 'unknown')}; "
+                        f"completion is {lesson_run.get('completion_percentage', 0)}%."
+                    ),
+                )
+                st.rerun()
+            if refresh_col.button("Refresh lesson state", key=f"lesson_refresh_{lesson_run['id']}"):
+                append_coach_activity(
+                    st.session_state,
+                    lesson_run["id"],
+                    "Refreshed lesson state",
+                    "Keep the coaching console aligned with current cluster evidence.",
+                    f"Lesson status remains {lesson_run.get('status', 'unknown')}.",
+                )
+                st.rerun()
+
+            st.markdown("**Coach activity**")
+            if lesson_activity:
+                for entry in lesson_activity[:4]:
+                    st.caption(
+                        f"{entry.get('time', '')} — {entry.get('action', '')}: "
+                        f"{entry.get('outcome', '')}"
+                    )
+            else:
+                st.caption("No coach actions recorded yet.")
+
+    with student_col:
+        with st.container(border=True):
+            st.markdown("### Student Workspace")
+            st.write(
+                "Use this area as your in-lesson command guide and notebook. "
+                "Run the commands in your lab shell, then ask the coach to re-check progress here."
+            )
+            if active_step:
+                status = active_step.get("status", "not_started")
+                st.markdown(
+                    f"**Active step:** {active_step.get('title', '')}  \n"
+                    f"{step_status_icon(status)} {step_status_badge(status)}"
+                )
+                observed = active_step.get("observed", "")
+                if observed:
+                    st.caption(f"Observed right now: {observed}")
+
+                commands = active_step.get("commands", [])
+                if commands:
+                    st.markdown("**Run these commands**")
+                    st.code("\n".join(commands), language="bash")
+                else:
+                    st.info("This step does not require a student-run command right now.")
+
+                st.markdown("**Interpret what you see**")
+                st.caption(active_step.get("verification", ""))
+
+                st.text_area(
+                    "Student command notebook / paste what you ran",
+                    key=lesson_input_key,
+                    height=120,
+                    placeholder="Example:\nls /etc/cni/net.d/\nsudo mv /etc/cni/net.d/05-cilium.conflist /etc/cni/net.d/05-cilium.conflist.bak",
+                )
+                notes_col, rerun_col = st.columns([1, 1])
+                if notes_col.button("Save note", key=f"lesson_save_note_{lesson_run['id']}"):
+                    note = st.session_state.get(lesson_input_key, "").strip()
+                    if note:
+                        saved_notes = list(st.session_state.get(lesson_notes_key, []))
+                        saved_notes.insert(
+                            0,
+                            {
+                                "time": datetime.now().strftime("%H:%M:%S"),
+                                "text": note,
+                            },
+                        )
+                        st.session_state[lesson_notes_key] = saved_notes[:6]
+                        st.session_state[lesson_input_key] = ""
+                        st.rerun()
+                if rerun_col.button("I ran this step — re-check", key=f"lesson_student_rerun_{lesson_run['id']}"):
+                    append_coach_activity(
+                        st.session_state,
+                        lesson_run["id"],
+                        "Re-checked after student step",
+                        "Use live verification instead of self-reported completion.",
+                        (
+                            f"Current classification: {lesson_run.get('classification', 'unknown')}; "
+                            f"lesson status: {lesson_run.get('status', 'unknown')}."
+                        ),
+                    )
+                    st.rerun()
+
+                saved_notes = st.session_state.get(lesson_notes_key, [])
+                if saved_notes:
+                    st.markdown("**Recent student notes**")
+                    for entry in saved_notes[:3]:
+                        st.caption(f"{entry.get('time', '')} — {entry.get('text', '')}")
+            else:
+                st.info("Select a lesson above to start guided work.")
+
+            if lesson_run.get("baseline_ready"):
+                st.success(
+                    "Known-good baseline verified. This lab is ready for the next networking lesson."
+                )
+            else:
+                st.info(
+                    "The lesson stays in progress until cka-coach can verify that residual networking state is gone."
+                )
 
 # --------------------------
 # Layer Detail
