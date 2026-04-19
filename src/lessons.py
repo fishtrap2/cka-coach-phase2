@@ -429,6 +429,7 @@ def _build_cleanup_steps(
     cleanup_targets = lesson.get("cleanup_target_nodes", [])
     all_nodes = [entry["node"] for entry in lesson.get("per_node_status", [])]
     classification_state = lesson.get("classification", "unknown")
+    unresolved_targets = ", ".join(cleanup_targets) if cleanup_targets else "(none)"
 
     steps = [
         {
@@ -558,6 +559,20 @@ def _build_cleanup_steps(
                 if progress.get("scripts_generated")
                 else "Scripts have not been generated yet."
             )
+        elif step["id"] == "confirm_baseline":
+            if lesson.get("baseline_ready"):
+                step["observed"] = "Known-good baseline verified."
+            else:
+                step["observed"] = (
+                    f"Baseline is still blocked by residual state on: {unresolved_targets}. "
+                    f"Current classification remains {classification_state}."
+                )
+                step["student_action"] = (
+                    "Review the generated remediation scripts again, run the needed sudo cleanup on the unresolved node(s), then re-check."
+                )
+                step["verification"] = (
+                    "Residual target nodes should drop to zero and classification should move to a known-good baseline."
+                )
 
     return steps
 

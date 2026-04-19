@@ -1264,13 +1264,27 @@ if lesson_run:
                     st.caption(f"Run on: {run_on}")
 
                 scripts = lesson_run.get("remediation_scripts", {})
-                if active_step.get("id") == "generate_remediation_scripts" and scripts:
+                should_show_scripts = (
+                    bool(scripts)
+                    and (
+                        active_step.get("id") == "generate_remediation_scripts"
+                        or (
+                            active_step.get("id") in {"student_run_remediation", "recheck_target_nodes", "confirm_baseline"}
+                            and not lesson_run.get("baseline_ready")
+                        )
+                    )
+                )
+                if should_show_scripts:
                     st.markdown("**Generated remediation scripts**")
                     for node_name, script in scripts.items():
                         st.markdown(f"**{script.get('filename', node_name)}**")
                         st.caption(script.get("summary", ""))
                         st.caption(f"Target node: {node_name} | sudo required: {script.get('sudo_required', 'yes')}")
                         st.code(script.get("content", ""), language="bash")
+                    if active_step.get("id") == "confirm_baseline" and not lesson_run.get("baseline_ready"):
+                        st.warning(
+                            "The baseline is still blocked. The generated remediation scripts remain visible here because at least one target node still needs cleanup."
+                        )
                 else:
                     commands = active_step.get("commands", [])
                     if commands:
