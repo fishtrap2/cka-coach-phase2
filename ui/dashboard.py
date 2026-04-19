@@ -242,6 +242,12 @@ def render_lesson_step_tracker(steps, current_step_index: int):
         )
 
 
+def lesson_table_value(value):
+    if isinstance(value, bool):
+        return "yes" if value else "no"
+    return str(value)
+
+
 def layer_family(key: str) -> str:
     if key in {"L9", "L8", "L7"}:
         return "blue"
@@ -1276,6 +1282,10 @@ if lesson_run:
                 )
                 if should_show_scripts:
                     st.markdown("**Generated remediation scripts**")
+                    st.caption(
+                        "These scripts are generated for review in the lesson screen only. "
+                        "cka-coach is not writing them to disk automatically."
+                    )
                     for node_name, script in scripts.items():
                         st.markdown(f"**{script.get('filename', node_name)}**")
                         st.caption(script.get("summary", ""))
@@ -1366,15 +1376,15 @@ if lesson_run:
     for entry in lesson_run.get("per_node_status", []):
         per_node_rows.append(
             {
-                "Node": entry.get("node", ""),
-                "Scope": entry.get("scope", ""),
-                "Classification": entry.get("current_classification", ""),
-                "Cilium ifaces": entry.get("cilium_interfaces_present", "unknown"),
-                "Calico ifaces": entry.get("calico_interfaces_present", "unknown"),
-                "Calico iptables": entry.get("calico_iptables_present", "unknown"),
-                "Residue": ", ".join(entry.get("residue_types", [])),
-                "Cleanup required": "yes" if entry.get("cleanup_required") else "no",
-                "Last verified": entry.get("last_verified_at", ""),
+                "Node": lesson_table_value(entry.get("node", "")),
+                "Scope": lesson_table_value(entry.get("scope", "")),
+                "Classification": lesson_table_value(entry.get("current_classification", "")),
+                "Cilium ifaces": lesson_table_value(entry.get("cilium_interfaces_present", "unknown")),
+                "Calico ifaces": lesson_table_value(entry.get("calico_interfaces_present", "unknown")),
+                "Calico iptables": lesson_table_value(entry.get("calico_iptables_present", "unknown")),
+                "Residue": lesson_table_value(", ".join(entry.get("residue_types", []))),
+                "Cleanup required": lesson_table_value(entry.get("cleanup_required", False)),
+                "Last verified": lesson_table_value(entry.get("last_verified_at", "")),
             }
         )
     if per_node_rows:
