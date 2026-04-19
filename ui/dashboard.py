@@ -111,6 +111,13 @@ body {
     background: #4a2a0b;
     color: #fdba74;
 }
+
+.plane-separator td {
+    height: 10px;
+    padding: 0;
+    border: none;
+    background: #05070b;
+}
 </style>
 """
 
@@ -864,7 +871,30 @@ def layer_status(key: str, health: dict):
 # --------------------------
 rows = ""
 
+family_theme = {
+    "blue": {"healthy": "#15365f", "border": "#60a5fa"},
+    "green": {"healthy": "#174227", "border": "#4ade80"},
+    "orange": {"healthy": "#4a3414", "border": "#fb923c"},
+}
+
+non_green_theme = {
+    "warn": {"background": "#31353f", "border": "#cbd5e1"},
+    "bad": {"background": "#4a2323", "border": "#fca5a5"},
+}
+
+plane_boundaries = {
+    "L6": True,
+    "L4.1": True,
+}
+
 for lvl, name, description, lives, exec_type, api, key in layers:
+    if key in plane_boundaries:
+        rows += """
+        <tr class="plane-separator">
+            <td colspan="8"></td>
+        </tr>
+        """
+
     current, ok = summary.get(key, ("...", True))
     version = versions_map.get(key, "")
     api_html = format_boundary_commands_html(api)
@@ -876,34 +906,31 @@ for lvl, name, description, lives, exec_type, api, key in layers:
 
     status = layer_status(key, health)
     family = layer_family(key)
-    family_base = {
-        "blue": {"healthy": "#102742", "warn": "#20344d", "bad": "#3b1d24"},
-        "green": {"healthy": "#10311a", "warn": "#274023", "bad": "#3d221d"},
-        "orange": {"healthy": "#2a220c", "warn": "#3f3113", "bad": "#4a1f12"},
-    }[family]
+    family_base = family_theme[family]
 
-    row_color = family_base["warn"]
+    row_color = non_green_theme["warn"]["background"]
+    border_color = non_green_theme["warn"]["border"]
     health_icon = "🟡"
 
     if status is True or status == "healthy":
         row_color = family_base["healthy"]
+        border_color = family_base["border"]
         health_icon = "🟢"
     elif status is False or status == "degraded":
-        row_color = family_base["bad"]
+        row_color = non_green_theme["bad"]["background"]
+        border_color = non_green_theme["bad"]["border"]
         health_icon = "🔴"
-
-    # --- everything else stays AMBER ---
 
     rows += f"""
     <tr style="background-color:{row_color}">
-        <td style="width:40px">{lvl}</td>
-        <td style="width:120px"><div class="layer-name">{name}</div>{health_icon}</td>
-        <td style="width:140px">{version}</td>
-        <td style="width:240px">{description}</td>
-        <td style="width:240px">{lives}</td>
-        <td style="width:180px">{exec_type}</td>
-        <td style="width:320px" class="small">{api_html}</td>
-        <td>{current}</td>
+        <td style="width:40px;border-color:{border_color}">{lvl}</td>
+        <td style="width:120px;border-color:{border_color}"><div class="layer-name">{name}</div>{health_icon}</td>
+        <td style="width:140px;border-color:{border_color}">{version}</td>
+        <td style="width:240px;border-color:{border_color}">{description}</td>
+        <td style="width:240px;border-color:{border_color}">{lives}</td>
+        <td style="width:180px;border-color:{border_color}">{exec_type}</td>
+        <td style="width:320px;border-color:{border_color}" class="small">{api_html}</td>
+        <td style="border-color:{border_color}">{current}</td>
     </tr>
     """
 
