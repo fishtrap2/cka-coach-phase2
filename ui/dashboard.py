@@ -1189,15 +1189,21 @@ if lesson_run:
                 st.markdown("**Interpret what you see**")
                 st.caption(active_step.get("verification", ""))
 
-                st.text_area(
-                    "Student command notebook / paste what you ran",
-                    key=lesson_input_key,
-                    height=120,
-                    placeholder="Example:\nls /etc/cni/net.d/\nsudo mv /etc/cni/net.d/05-cilium.conflist /etc/cni/net.d/05-cilium.conflist.bak",
-                )
-                notes_col, rerun_col = st.columns([1, 1])
-                if notes_col.button("Save note", key=f"lesson_save_note_{lesson_run['id']}"):
-                    note = st.session_state.get(lesson_input_key, "").strip()
+                with st.form(
+                    key=f"lesson_note_form_{lesson_run['id']}",
+                    clear_on_submit=True,
+                ):
+                    note = st.text_area(
+                        "Student command notebook / paste what you ran",
+                        key=lesson_input_key,
+                        height=120,
+                        placeholder="Example:\nls /etc/cni/net.d/\nsudo mv /etc/cni/net.d/05-cilium.conflist /etc/cni/net.d/05-cilium.conflist.bak",
+                    )
+                    save_note = st.form_submit_button("Save note")
+
+                rerun_col, spacer_col = st.columns([1, 1])
+                if save_note:
+                    note = note.strip()
                     if note:
                         saved_notes = list(st.session_state.get(lesson_notes_key, []))
                         saved_notes.insert(
@@ -1208,7 +1214,6 @@ if lesson_run:
                             },
                         )
                         st.session_state[lesson_notes_key] = saved_notes[:6]
-                        st.session_state[lesson_input_key] = ""
                         st.rerun()
                 if rerun_col.button("I ran this step — re-check", key=f"lesson_student_rerun_{lesson_run['id']}"):
                     append_coach_activity(
