@@ -49,6 +49,25 @@ class TestCniDetection(unittest.TestCase):
         self.assertEqual(result["source"], "kubectl_exec_birdcl")
         self.assertEqual(result["established_peers"], 1)
 
+    def test_detect_stale_cni_interfaces_ignores_tunl0_only(self):
+        result = state_collector._detect_stale_cni_interfaces(
+            "16: tunl0@NONE: <NOARP,UP,LOWER_UP> mtu 1440",
+            "unknown",
+        )
+
+        self.assertFalse(result["detected"])
+        self.assertEqual(result["interfaces"], [])
+        self.assertEqual(result["informational_interfaces"], ["tunl0"])
+
+    def test_detect_stale_cni_interfaces_treats_cali_interfaces_as_real_residue(self):
+        result = state_collector._detect_stale_cni_interfaces(
+            "21: cali50e56ce114b@if4: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1440",
+            "unknown",
+        )
+
+        self.assertTrue(result["detected"])
+        self.assertIn("cali50e56ce114b", result["interfaces"])
+
     def test_kubelet_health_ignores_cleanup_noise_when_service_and_nodes_are_healthy(self):
         runtime = {
             "pods": (

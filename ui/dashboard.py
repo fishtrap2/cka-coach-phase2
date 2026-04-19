@@ -1137,6 +1137,8 @@ if lesson_run:
 
             st.markdown("**Current position in the lesson**")
             st.write(lesson_run.get("current_position_summary", ""))
+            for note in lesson_run.get("nonblocking_notes", []):
+                st.info(note)
             render_lesson_step_tracker(lesson_steps, current_step_index)
 
             st.markdown("**Next step guidance**")

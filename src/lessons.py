@@ -293,8 +293,8 @@ def _parse_cni_pod_nodes(runtime: Dict[str, Any], current_cni: str) -> Dict[str,
 def _local_interface_presence(runtime: Dict[str, Any]) -> Dict[str, bool]:
     network_text = runtime.get("network", "").lower()
     return {
-        "cilium_interfaces_present": any(name in network_text for name in ["cilium_host", "cilium_net", "lxc"]),
-        "calico_interfaces_present": any(name in network_text for name in ["tunl0", "vxlan.calico", "cali"]),
+        "cilium_interfaces_present": any(name in network_text for name in ["cilium_host", "cilium_net", "cilium_vxlan"]),
+        "calico_interfaces_present": any(name in network_text for name in ["vxlan.calico", "cali"]),
     }
 
 
@@ -312,7 +312,9 @@ def _local_iptables_presence(runtime: Dict[str, Any]) -> Dict[str, bool | str]:
 
 
 def _safe_residual_note(current_cni: str, artifact: str) -> str:
-    if current_cni == "calico" and artifact in {"tunl0", "vxlan.calico"}:
+    if artifact == "tunl0":
+        return "informational tunnel device — not a cleanup blocker"
+    if current_cni == "calico" and (artifact in {"vxlan.calico"} or artifact.startswith("cali")):
         return "actively retained / recreated artifact — do not blindly remove"
     if current_cni == "cilium" and artifact.startswith("cilium"):
         return "actively retained / recreated artifact — do not blindly remove"
@@ -329,11 +331,21 @@ def _local_residual_interface_candidates(runtime: Dict[str, Any], current_cni: s
         lower = iface_name.lower()
         if lower in {"lo", "ens4", "docker0"}:
             continue
-        if lower in {"tunl0", "vxlan.calico", "cilium_host", "cilium_net", "cilium_vxlan"}:
-            if current_cni in {"calico", "cilium"}:
-                continue
+        if lower.startswith(("cilium_host", "cilium_net", "cilium_vxlan")) and current_cni != "cilium":
+            candidates.append(iface_name)
+        elif (lower.startswith("cali") or lower == "vxlan.calico") and current_cni != "calico":
             candidates.append(iface_name)
     return sorted(set(candidates))
+
+
+def _nonblocking_network_notes(runtime: Dict[str, Any]) -> List[str]:
+    network_text = runtime.get("network", "").lower()
+    notes: List[str] = []
+    if "tunl0" in network_text:
+        notes.append(
+            "tunl0 is a Linux IP-in-IP tunnel device. It may persist or reappear and is not treated as a blocking cleanup target."
+        )
+    return notes
 
 
 def _cni_config_cleanup_candidates(
@@ -386,14 +398,13 @@ def _build_per_node_status(
 
     stale_taint_nodes = {item.get("node", "") for item in stale_taint.get("taints", [])}
     stale_interface_names = stale_interfaces.get("interfaces", [])
+    informational_interfaces = stale_interfaces.get("informational_interfaces", [])
 
     statuses = []
     processed_nodes = set()
     local_residue_detected = bool(
         classification_state in {"stale_node_config", "stale_interfaces"}
         or stale_interface_names
-        or iptables_presence["calico_iptables_present"] is True
-        or iptables_presence["cilium_iptables_present"] is True
     )
 
     for node in node_names:
@@ -418,12 +429,12 @@ def _build_per_node_status(
                 cleanup_required = True
                 if node_classification == "cluster_footprint_only":
                     node_classification = "stale_interfaces"
+            if informational_interfaces:
+                residue_types.append("informational_tunnel_device")
             if iptables_presence["calico_iptables_present"] is True and current_cni != "calico":
                 residue_types.append("calico_iptables")
-                cleanup_required = True
             if iptables_presence["cilium_iptables_present"] is True and current_cni != "cilium":
                 residue_types.append("cilium_iptables")
-                cleanup_required = True
             if not residue_types and classification_state in {"healthy_calico", "healthy_cilium", "generic_cni", "no_cni"}:
                 node_classification = classification_state
         elif node in cluster_pod_nodes:
@@ -461,6 +472,8 @@ def _build_per_node_status(
             residue_types.append("stale_node_config")
         if stale_interface_names:
             residue_types.append("stale_interfaces")
+        if informational_interfaces:
+            residue_types.append("informational_tunnel_device")
         if iptables_presence["calico_iptables_present"] is True and current_cni != "calico":
             residue_types.append("calico_iptables")
         if iptables_presence["cilium_iptables_present"] is True and current_cni != "cilium":
@@ -542,11 +555,11 @@ def _generate_remediation_script_for_node(
 
     if stale_interfaces:
         lines.append("")
-        lines.append("echo 'Phase 3: remove reviewed residual interfaces'")
+        lines.append("echo 'Phase 3: review mixed dataplane interfaces'")
         for iface in stale_interfaces:
             note = _safe_residual_note(current_cni, iface)
             lines.append(f"# {iface}: {note}")
-            if note.startswith("safe residual candidate"):
+            if iface.startswith("cilium"):
                 lines.extend(
                     [
                         f"if ip link show {iface} >/dev/null 2>&1; then",
@@ -555,6 +568,8 @@ def _generate_remediation_script_for_node(
                         "fi",
                     ]
                 )
+            elif iface.startswith("cali") or iface == "vxlan.calico":
+                lines.append("# do not auto-delete cali* or vxlan.calico here; verify they are orphaned first")
             else:
                 lines.append(f"# inspect {iface} carefully before any deletion")
 
@@ -563,18 +578,11 @@ def _generate_remediation_script_for_node(
             [
                 "",
                 "# This node may still have the same stale interfaces as the locally observed node.",
-                "# Review and remove these if they appear here too.",
+                "# Review these interfaces if they appear here too.",
             ]
         )
         for iface in stale_interfaces:
-            lines.extend(
-                [
-                    f"if ip link show {iface} >/dev/null 2>&1; then",
-                    f"  echo 'Deleting matching residual interface: {iface}'",
-                    f"  sudo ip link delete {iface}",
-                    "fi",
-                ]
-            )
+            lines.append(f"# possible residual on this node: {iface}")
 
     if per_node_entry.get("residue_types") and "stale_taint" in per_node_entry.get("residue_types", []):
         lines.extend(
@@ -602,7 +610,8 @@ def _generate_remediation_script_for_node(
     explanation = (
         f"This script is scoped to node `{node_name}`. It focuses on reviewable cleanup for "
         f"{previous_cni if previous_cni != 'unknown' else 'previous CNI'} residue while avoiding "
-        "blind removal of artifacts that may be actively recreated by the current plugin."
+        "blind removal of artifacts that may be actively recreated by the current plugin. "
+        "tunl0 is treated as informational only and is not a required deletion target."
     )
 
     return {
@@ -774,14 +783,14 @@ def _build_cleanup_steps(
                 step["observed"] = "Known-good baseline verified."
             else:
                 step["observed"] = (
-                    f"Baseline is still blocked by residual state on: {unresolved_targets}. "
+                    f"Baseline is still blocked by mixed networking state on: {unresolved_targets}. "
                     f"Current classification remains {classification_state}."
                 )
                 step["student_action"] = (
                     "Review the generated remediation scripts again, run the needed sudo cleanup on the unresolved node(s), then re-check."
                 )
                 step["verification"] = (
-                    "Residual target nodes should drop to zero and classification should move to a known-good baseline."
+                    "Calico dataplane remnants or mixed dataplane signals should drop to zero and classification should move to a known-good baseline."
                 )
 
     return steps
@@ -856,6 +865,7 @@ def _build_cleanup_lesson(state: Dict[str, Any], progress: Dict[str, Any]) -> Di
             "Residual CNI state can survive migrations and make later install lessons unreliable. "
             "The coach will show scope, generate reviewable sudo steps, and verify outcomes after each pause."
         ),
+        "nonblocking_notes": _nonblocking_network_notes(runtime),
     }
 
     steps = _build_cleanup_steps(lesson, progress)

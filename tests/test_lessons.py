@@ -145,25 +145,26 @@ class TestLessons(unittest.TestCase):
         state = _base_state()
         state["evidence"]["cni"]["classification"]["state"] = "stale_interfaces"
         state["evidence"]["cni"]["classification"]["stale_interfaces"] = {
-            "detected": True,
-            "interfaces": ["tunl0"],
-            "summary": "stale interfaces detected (tunl0)",
+            "detected": False,
+            "interfaces": [],
+            "informational_interfaces": ["tunl0"],
+            "summary": "non-blocking tunnel interfaces detected (tunl0)",
         }
         state["runtime"]["network"] = "33: tunl0@NONE: <NOARP,UP,LOWER_UP> mtu 1440"
 
         lesson = lessons.build_lesson_run("reset_networking_lab", state)
 
         local_entry = next(entry for entry in lesson["per_node_status"] if entry["node"] == "cp")
-        self.assertTrue(local_entry["cleanup_required"])
-        self.assertIn("stale_interfaces", local_entry["residue_types"])
+        self.assertFalse(local_entry["cleanup_required"])
+        self.assertIn("informational_tunnel_device", local_entry["residue_types"])
 
     def test_safe_residual_interface_script_contains_actual_delete(self):
         state = _base_state()
         state["evidence"]["cni"]["classification"]["state"] = "stale_interfaces"
         state["evidence"]["cni"]["classification"]["stale_interfaces"] = {
             "detected": True,
-            "interfaces": ["tunl0", "cilium_host"],
-            "summary": "stale interfaces detected (tunl0, cilium_host)",
+            "interfaces": ["cilium_host"],
+            "summary": "stale interfaces detected (cilium_host)",
         }
         state["runtime"]["network"] = (
             "3: cilium_net@cilium_host: <BROADCAST,MULTICAST,NOARP,UP,LOWER_UP> mtu 1460\n"
@@ -176,10 +177,10 @@ class TestLessons(unittest.TestCase):
         progress.update({"inspect_ran": True, "classify_ran": True, "scripts_generated": True, "current_step": 2})
         lesson = lessons.build_lesson_run("reset_networking_lab", state, progress)
 
-        self.assertIn("sudo ip link delete tunl0", lesson["remediation_scripts"]["cp"]["content"])
         self.assertIn("sudo ip link delete cilium_host", lesson["remediation_scripts"]["cp"]["content"])
         self.assertIn("sudo ip link delete cilium_net", lesson["remediation_scripts"]["cp"]["content"])
         self.assertIn("sudo ip link delete cilium_vxlan", lesson["remediation_scripts"]["cp"]["content"])
+        self.assertNotIn("sudo ip link delete tunl0", lesson["remediation_scripts"]["cp"]["content"])
 
     def test_script_moves_aside_common_residual_cni_configs(self):
         state = _base_state()
@@ -206,10 +207,10 @@ class TestLessons(unittest.TestCase):
         state["evidence"]["cni"]["classification"]["state"] = "stale_interfaces"
         state["evidence"]["cni"]["classification"]["stale_interfaces"] = {
             "detected": True,
-            "interfaces": ["tunl0"],
-            "summary": "stale interfaces detected (tunl0)",
+            "interfaces": ["cilium_host"],
+            "summary": "stale interfaces detected (cilium_host)",
         }
-        state["runtime"]["network"] = "33: tunl0@NONE: <NOARP,UP,LOWER_UP> mtu 1440"
+        state["runtime"]["network"] = "4: cilium_host@cilium_net: <BROADCAST,MULTICAST,NOARP,UP,LOWER_UP> mtu 1460"
 
         progress = lessons.default_lesson_progress()
         progress.update({"inspect_ran": True, "classify_ran": True, "scripts_generated": True, "current_step": 2})
@@ -232,12 +233,12 @@ class TestLessons(unittest.TestCase):
 
     def test_student_remediation_step_targets_one_node_at_a_time(self):
         state = _base_state()
-        state["runtime"]["network"] = "33: tunl0@NONE: <NOARP,UP,LOWER_UP> mtu 1440"
+        state["runtime"]["network"] = "4: cilium_host@cilium_net: <BROADCAST,MULTICAST,NOARP,UP,LOWER_UP> mtu 1460"
         state["evidence"]["cni"]["classification"]["state"] = "stale_interfaces"
         state["evidence"]["cni"]["classification"]["stale_interfaces"] = {
             "detected": True,
-            "interfaces": ["tunl0"],
-            "summary": "stale interfaces detected (tunl0)",
+            "interfaces": ["cilium_host"],
+            "summary": "stale interfaces detected (cilium_host)",
         }
 
         progress = lessons.default_lesson_progress()
@@ -255,6 +256,24 @@ class TestLessons(unittest.TestCase):
         self.assertEqual(lesson["current_remediation_target"], "cp")
         self.assertEqual(lesson["steps"][3]["target_nodes"], ["cp"])
         self.assertIn("cleanup-cni-residuals-cp.sh", lesson["steps"][3]["student_action"])
+
+    def test_tunl0_alone_is_non_blocking_for_baseline(self):
+        state = _base_state()
+        state["evidence"]["cni"]["classification"]["state"] = "generic_cni"
+        state["evidence"]["cni"]["classification"]["reason"] = "Networking appears functional without a strong named plugin signal."
+        state["evidence"]["cni"]["classification"]["stale_interfaces"] = {
+            "detected": False,
+            "interfaces": [],
+            "informational_interfaces": ["tunl0"],
+            "summary": "non-blocking tunnel interfaces detected (tunl0)",
+        }
+        state["runtime"]["network"] = "33: tunl0@NONE: <NOARP,UP,LOWER_UP> mtu 1440"
+
+        lesson = lessons.build_lesson_run("reset_networking_lab", state)
+
+        self.assertTrue(lesson["baseline_ready"])
+        self.assertEqual(lesson["cleanup_target_nodes"], [])
+        self.assertTrue(lesson["nonblocking_notes"])
 
 
 if __name__ == "__main__":

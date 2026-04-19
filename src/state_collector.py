@@ -926,27 +926,35 @@ def _detect_stale_cni_interfaces(network_text: str, current_cni: str) -> Dict[st
     """
     stale = []
     previous = "unknown"
+    informational = []
     for line in network_text.splitlines():
         stripped = line.strip()
         if not stripped or ": " not in stripped:
             continue
         iface_name = stripped.split(": ", 1)[1].split(":", 1)[0].split("@", 1)[0]
         lower = iface_name.lower()
-        if lower.startswith(("cilium_host", "cilium_net", "lxc")) and current_cni != "cilium":
+        if lower.startswith(("cilium_host", "cilium_net", "cilium_vxlan")) and current_cni != "cilium":
             stale.append(iface_name)
             previous = "cilium"
-        elif lower in {"tunl0", "vxlan.calico"} and current_cni != "calico":
+        elif (lower.startswith("cali") or lower == "vxlan.calico") and current_cni != "calico":
             stale.append(iface_name)
             previous = "calico"
+        elif lower == "tunl0":
+            informational.append(iface_name)
 
     return {
         "detected": bool(stale),
         "previous_cni": previous,
         "interfaces": sorted(set(stale)),
+        "informational_interfaces": sorted(set(informational)),
         "summary": (
             f"stale interfaces detected ({', '.join(sorted(set(stale)))})"
             if stale
-            else "no stale CNI interfaces detected"
+            else (
+                "non-blocking tunnel interfaces detected (tunl0)"
+                if informational
+                else "no stale CNI interfaces detected"
+            )
         ),
     }
 
@@ -1068,6 +1076,8 @@ def _classify_cni_state(
         if previous_detected_cni == "unknown":
             previous_detected_cni = stale_interfaces.get("previous_cni", "unknown")
         notes.append("Leftover node interfaces from a previous CNI are still present.")
+    elif stale_interfaces.get("informational_interfaces"):
+        notes.append("tunl0 is present as a non-blocking Linux IP-in-IP tunnel device and is not treated as required cleanup.")
     if reconciliation == "conflict":
         if previous_detected_cni == "unknown" and node_cni not in {"", "unknown"} and cluster_cni not in {"", "unknown"}:
             previous_detected_cni = node_cni if node_cni != cni_text else cluster_cni
