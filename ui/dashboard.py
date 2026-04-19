@@ -123,6 +123,36 @@ body {
     border: none;
     background: #05070b;
 }
+
+.plane-label-cell {
+    width: 34px;
+    min-width: 34px;
+    text-align: center;
+    padding: 0;
+}
+
+.plane-label {
+    writing-mode: vertical-rl;
+    text-orientation: mixed;
+    transform: rotate(180deg);
+    font-weight: bold;
+    font-size: 11px;
+    letter-spacing: 0.4px;
+    margin: 0 auto;
+    line-height: 1.1;
+}
+
+.plane-blue {
+    color: #93c5fd;
+}
+
+.plane-green {
+    color: #86efac;
+}
+
+.plane-orange {
+    color: #fdba74;
+}
 </style>
 """
 
@@ -892,11 +922,17 @@ plane_boundaries = {
     "L4.1": True,
 }
 
+plane_labels = {
+    "L9": {"label": "App / Desired State", "rowspan": 3, "class": "plane-blue"},
+    "L6": {"label": "Control Plane / Reconciliation", "rowspan": 3, "class": "plane-green"},
+    "L4.1": {"label": "Node / Runtime / Dataplane", "rowspan": 7, "class": "plane-orange"},
+}
+
 for lvl, name, description, lives, exec_type, api, key in layers:
     if key in plane_boundaries:
         rows += """
         <tr class="plane-separator">
-            <td colspan="8"></td>
+            <td colspan="9"></td>
         </tr>
         """
 
@@ -928,6 +964,10 @@ for lvl, name, description, lives, exec_type, api, key in layers:
 
     rows += f"""
     <tr style="background-color:{row_color}">
+        {
+            f'<td rowspan="{plane_labels[key]["rowspan"]}" class="plane-label-cell" style="border-color:{border_color}"><div class="plane-label {plane_labels[key]["class"]}">{plane_labels[key]["label"]}</div></td>'
+            if key in plane_labels else ''
+        }
         <td style="width:40px;border-color:{border_color}">{lvl}</td>
         <td style="width:120px;border-color:{border_color}"><div class="layer-name">{name}</div>{health_icon}</td>
         <td style="width:140px;border-color:{border_color}">{version}</td>
@@ -945,6 +985,7 @@ for lvl, name, description, lives, exec_type, api, key in layers:
 table_html += f"""
 <table class="els-table">
     <tr>
+        <th style="width:34px"></th>
         <th style="width:40px">Lvl</th>
         <th style="width:120px">Layer (health)</th>
         <th style="width:140px">Version</th>
