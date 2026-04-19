@@ -58,6 +58,8 @@ def default_lesson_progress() -> Dict[str, Any]:
         "student_confirmed": False,
         "recheck_ran": False,
         "baseline_confirmed": False,
+        "current_target_index": 0,
+        "completed_target_nodes": [],
     }
 
 
@@ -379,8 +381,16 @@ def _build_per_node_status(
                 node_classification = classification_state
         elif node in cluster_pod_nodes:
             node_classification = f"{current_cni or 'cni'} cluster footprint"
+            if classification_state == "stale_interfaces" and current_cni in {"", "unknown"}:
+                residue_types.append("possible_stale_interfaces")
+                cleanup_required = True
+                node_classification = "possible_stale_interfaces"
         elif current_cni in {"calico", "cilium"}:
             node_classification = "node-local evidence unavailable"
+        elif classification_state == "stale_interfaces" and stale_interface_names:
+            residue_types.append("possible_stale_interfaces")
+            cleanup_required = True
+            node_classification = "possible_stale_interfaces"
 
         statuses.append(
             {
@@ -467,7 +477,9 @@ def _generate_remediation_script_for_node(
                 "",
                 "# Review stale node-level config before moving it aside.",
                 f"cat {stale_config_path}",
-                f"# sudo mv {stale_config_path} {stale_config_path}.bak",
+                f'if [ -f "{stale_config_path}" ]; then',
+                f'  sudo mv "{stale_config_path}" "{stale_config_path}.bak"',
+                "fi",
             ]
         )
 
@@ -475,11 +487,37 @@ def _generate_remediation_script_for_node(
         lines.append("")
         lines.append("# Review leftover interfaces before deleting anything.")
         for iface in stale_interfaces:
-            lines.append(f"# {iface}: {_safe_residual_note(current_cni, iface)}")
-            if _safe_residual_note(current_cni, iface).startswith("safe residual candidate"):
-                lines.append(f"# sudo ip link delete {iface}")
+            note = _safe_residual_note(current_cni, iface)
+            lines.append(f"# {iface}: {note}")
+            if note.startswith("safe residual candidate"):
+                lines.extend(
+                    [
+                        f"if ip link show {iface} >/dev/null 2>&1; then",
+                        f"  echo 'Deleting reviewed residual interface: {iface}'",
+                        f"  sudo ip link delete {iface}",
+                        "fi",
+                    ]
+                )
             else:
                 lines.append(f"# inspect {iface} carefully before any deletion")
+
+    if "possible_stale_interfaces" in per_node_entry.get("residue_types", []):
+        lines.extend(
+            [
+                "",
+                "# This node may still have the same stale interfaces as the locally observed node.",
+                "# Review and remove these if they appear here too.",
+            ]
+        )
+        for iface in stale_interfaces:
+            lines.extend(
+                [
+                    f"if ip link show {iface} >/dev/null 2>&1; then",
+                    f"  echo 'Deleting matching residual interface: {iface}'",
+                    f"  sudo ip link delete {iface}",
+                    "fi",
+                ]
+            )
 
     if per_node_entry.get("residue_types") and "stale_taint" in per_node_entry.get("residue_types", []):
         lines.extend(
@@ -521,6 +559,15 @@ def _build_cleanup_steps(
     all_nodes = [entry["node"] for entry in lesson.get("per_node_status", [])]
     classification_state = lesson.get("classification", "unknown")
     unresolved_targets = ", ".join(cleanup_targets) if cleanup_targets else "(none)"
+    current_target_index = min(
+        int(progress.get("current_target_index", 0)),
+        max(len(cleanup_targets) - 1, 0),
+    )
+    current_target = cleanup_targets[current_target_index] if cleanup_targets else ""
+    completed_targets = list(progress.get("completed_target_nodes", []))
+    remaining_targets = [node for node in cleanup_targets if node not in completed_targets]
+    if current_target and current_target not in remaining_targets:
+        remaining_targets = [current_target] + [node for node in cleanup_targets if node not in completed_targets and node != current_target]
 
     steps = [
         {
@@ -569,11 +616,19 @@ def _build_cleanup_steps(
             "coach_can_do": False,
             "student_must_do": True,
             "target_scope": "Node remediation" if cleanup_targets else "No node remediation required",
-            "target_nodes": cleanup_targets,
+            "target_nodes": [current_target] if current_target else cleanup_targets,
             "coach_action": "",
-            "student_action": "Run the reviewed script on each target node, then return for verification.",
-            "verification": "Student confirms the reviewed command/script was run on the listed target node(s).",
-            "run_on": "Node shell with sudo/root access",
+            "student_action": (
+                f"Run `cleanup-cni-residuals-{current_target}.sh` on node `{current_target}`, then return here so the coach can move to the next target."
+                if current_target
+                else "No node remediation is required."
+            ),
+            "verification": (
+                f"Student confirms the reviewed script was run on node `{current_target}`."
+                if current_target
+                else "No node remediation required."
+            ),
+            "run_on": f"Node shell with sudo/root access: {current_target}" if current_target else "No node remediation required",
         },
         {
             "id": "recheck_target_nodes",
@@ -641,7 +696,9 @@ def _build_cleanup_steps(
 
         if step["id"] == "student_run_remediation" and cleanup_targets:
             step["observed"] = (
-                f"Target nodes requiring cleanup: {', '.join(cleanup_targets)}. "
+                f"Current target: {current_target or '(none)'}; "
+                f"completed: {', '.join(completed_targets) if completed_targets else '(none)'}; "
+                f"remaining after this: {', '.join([node for node in cleanup_targets if node not in completed_targets and node != current_target]) or '(none)'}. "
                 f"Current classification: {classification_state}."
             )
         elif step["id"] == "generate_remediation_scripts":
@@ -720,6 +777,12 @@ def _build_cleanup_lesson(state: Dict[str, Any], progress: Dict[str, Any]) -> Di
         "provenance": provenance,
         "per_node_status": per_node_status,
         "cleanup_target_nodes": cleanup_target_nodes,
+        "current_remediation_target": (
+            cleanup_target_nodes[min(int(progress.get("current_target_index", 0)), max(len(cleanup_target_nodes) - 1, 0))]
+            if cleanup_target_nodes
+            else ""
+        ),
+        "completed_target_nodes": list(progress.get("completed_target_nodes", [])),
         "baseline_ready": baseline_ready,
         "local_node": local_node,
         "remediation_scripts": remediation_scripts,

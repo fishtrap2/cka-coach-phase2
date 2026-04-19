@@ -157,6 +157,22 @@ class TestLessons(unittest.TestCase):
         self.assertTrue(local_entry["cleanup_required"])
         self.assertIn("stale_interfaces", local_entry["residue_types"])
 
+    def test_safe_residual_interface_script_contains_actual_delete(self):
+        state = _base_state()
+        state["evidence"]["cni"]["classification"]["state"] = "stale_interfaces"
+        state["evidence"]["cni"]["classification"]["stale_interfaces"] = {
+            "detected": True,
+            "interfaces": ["tunl0"],
+            "summary": "stale interfaces detected (tunl0)",
+        }
+        state["runtime"]["network"] = "33: tunl0@NONE: <NOARP,UP,LOWER_UP> mtu 1440"
+
+        progress = lessons.default_lesson_progress()
+        progress.update({"inspect_ran": True, "classify_ran": True, "scripts_generated": True, "current_step": 2})
+        lesson = lessons.build_lesson_run("reset_networking_lab", state, progress)
+
+        self.assertIn("sudo ip link delete tunl0", lesson["remediation_scripts"]["cp"]["content"])
+
     def test_cleanup_lesson_keeps_local_cleanup_target_when_hostname_does_not_match_node_name(self):
         state = _base_state()
         state["runtime"]["hostname"] = "student-lab-host"
@@ -186,6 +202,32 @@ class TestLessons(unittest.TestCase):
         resolved = lessons._resolve_local_node(["cp", "worker1"], state["runtime"])
 
         self.assertEqual(resolved, "cp")
+
+    def test_student_remediation_step_targets_one_node_at_a_time(self):
+        state = _base_state()
+        state["runtime"]["network"] = "33: tunl0@NONE: <NOARP,UP,LOWER_UP> mtu 1440"
+        state["evidence"]["cni"]["classification"]["state"] = "stale_interfaces"
+        state["evidence"]["cni"]["classification"]["stale_interfaces"] = {
+            "detected": True,
+            "interfaces": ["tunl0"],
+            "summary": "stale interfaces detected (tunl0)",
+        }
+
+        progress = lessons.default_lesson_progress()
+        progress.update(
+            {
+                "inspect_ran": True,
+                "classify_ran": True,
+                "scripts_generated": True,
+                "current_step": 3,
+                "current_target_index": 0,
+            }
+        )
+        lesson = lessons.build_lesson_run("reset_networking_lab", state, progress)
+
+        self.assertEqual(lesson["current_remediation_target"], "cp")
+        self.assertEqual(lesson["steps"][3]["target_nodes"], ["cp"])
+        self.assertIn("cleanup-cni-residuals-cp.sh", lesson["steps"][3]["student_action"])
 
 
 if __name__ == "__main__":

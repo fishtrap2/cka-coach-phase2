@@ -1270,6 +1270,8 @@ if lesson_run:
                     st.caption(f"Run on: {run_on}")
 
                 scripts = lesson_run.get("remediation_scripts", {})
+                current_remediation_target = lesson_run.get("current_remediation_target", "")
+                completed_target_nodes = lesson_run.get("completed_target_nodes", [])
                 should_show_scripts = (
                     bool(scripts)
                     and (
@@ -1286,11 +1288,25 @@ if lesson_run:
                         "These scripts are generated for review in the lesson screen only. "
                         "cka-coach is not writing them to disk automatically."
                     )
-                    if len(scripts) > 1:
+                    ordered_nodes = list(scripts.keys())
+                    if current_remediation_target and current_remediation_target in ordered_nodes:
+                        ordered_nodes = [current_remediation_target] + [
+                            node for node in ordered_nodes if node != current_remediation_target
+                        ]
+                    if current_remediation_target:
+                        st.info(
+                            f"Run this next: `cleanup-cni-residuals-{current_remediation_target}.sh` on node `{current_remediation_target}`."
+                        )
+                    if completed_target_nodes:
+                        st.caption(
+                            "Completed target nodes: " + ", ".join(completed_target_nodes)
+                        )
+                    if len(ordered_nodes) > 1:
                         st.markdown("**Run these next**")
-                        for idx, node_name in enumerate(scripts.keys(), start=1):
+                        for idx, node_name in enumerate(ordered_nodes, start=1):
                             st.write(f"{idx}. Run `cleanup-cni-residuals-{node_name}.sh` on node `{node_name}`")
-                    for node_name, script in scripts.items():
+                    for node_name in ordered_nodes:
+                        script = scripts[node_name]
                         st.markdown(f"**{script.get('filename', node_name)}**")
                         st.caption(script.get("summary", ""))
                         st.caption(f"Target node: {node_name} | sudo required: {script.get('sudo_required', 'yes')}")
@@ -1342,7 +1358,27 @@ if lesson_run:
                 ):
                     updated = dict(lesson_progress)
                     updated["student_confirmed"] = True
-                    if current_step_index < len(lesson_steps) - 1:
+                    current_target = lesson_run.get("current_remediation_target", "")
+                    cleanup_targets = list(lesson_run.get("cleanup_target_nodes", []))
+                    completed_targets = list(updated.get("completed_target_nodes", []))
+                    advanced_to_next_target = False
+                    if (
+                        active_step.get("id") == "student_run_remediation"
+                        and current_target
+                        and current_target not in completed_targets
+                    ):
+                        completed_targets.append(current_target)
+                        updated["completed_target_nodes"] = completed_targets
+                        remaining_targets = [
+                            node for node in cleanup_targets if node not in completed_targets
+                        ]
+                        if remaining_targets:
+                            updated["current_target_index"] = cleanup_targets.index(remaining_targets[0])
+                            updated["current_step"] = current_step_index
+                            advanced_to_next_target = True
+                        elif current_step_index < len(lesson_steps) - 1:
+                            updated["current_step"] = current_step_index + 1
+                    elif current_step_index < len(lesson_steps) - 1:
                         updated["current_step"] = current_step_index + 1
                     append_coach_audit(
                         st.session_state,
@@ -1352,7 +1388,11 @@ if lesson_run:
                         target_nodes,
                         "student_confirmation",
                         "student reported reviewed sudo step was run",
-                        "Moved lesson to coach re-check step.",
+                        (
+                            f"Marked {current_target} complete and advanced to the next target node."
+                            if advanced_to_next_target
+                            else "Moved lesson to coach re-check step."
+                        ),
                         state_changed=False,
                         requires_student_action=False,
                     )
