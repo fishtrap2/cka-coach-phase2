@@ -10,6 +10,8 @@ sys.path.append(os.path.join(os.path.dirname(__file__), "..", "src"))
 from state_collector import collect_state
 from dashboard_presenters import cni_config_spec_display
 from agent import ask_llm
+from command_boundaries import format_boundary_commands_html, format_boundary_commands_text
+from els_model import ELS_LAYERS
 
 ALLOW_HOST_EVIDENCE = "--allow-host-evidence" in sys.argv[1:]
 
@@ -64,6 +66,21 @@ body {
 .detail-note {
     font-size: 12px;
     color: #475569;
+}
+
+.cmd-group {
+    margin-bottom: 6px;
+}
+
+.cmd-boundary {
+    font-weight: bold;
+    color: #8aff8a;
+    margin-bottom: 2px;
+}
+
+.cmd-item {
+    padding-left: 10px;
+    white-space: pre-wrap;
 }
 </style>
 """
@@ -120,6 +137,19 @@ def normalize_explanation_output(explanation):
         return json.loads(cleaned)
     except Exception:
         return {"raw_text": explanation}
+
+
+def render_guided_plan(plan):
+    for idx, step in enumerate(plan, start=1):
+        title = step.get("title", f"Step {idx}")
+        st.markdown(f"**Step {idx}: {title}**")
+        st.markdown(f"Why: {step.get('why', '')}")
+        commands = step.get("commands", [])
+        if commands:
+            st.markdown("Commands:")
+            for command in commands:
+                st.code(command, language="bash")
+        st.markdown(f"Interpretation: {step.get('interpretation', '')}")
 
 
 def summarize(state: dict) -> dict:
@@ -686,25 +716,47 @@ summary = summarize(state)
 versions_map = map_versions_to_layers(state)
 health = state.get("health", {})
 
+
+def _layer_debug_commands(key: str):
+    """
+    Reuse ELS layer debug metadata wherever possible, with a few UI-level
+    overrides only where the visible table needs more operationally useful
+    entry points than the base schema currently provides.
+    """
+    overrides = {
+        "L6.5": ["kubectl cluster-info", "kubectl get componentstatuses", "crictl ps | grep kube-apiserver"],
+        "L5": ["kubectl get events", "kubectl describe deployment <name>", "kubectl get ds -A"],
+        "L4.1": ["systemctl status kubelet", "journalctl -u kubelet"],
+        "L4.2": ["kubectl get pods -n kube-system -l k8s-app=kube-proxy", "iptables -L -n -v"],
+        "L4.3": ["kubectl get pods -n kube-system", "kubectl get ds -n kube-system", "ls /etc/cni/net.d/", "cat /etc/cni/net.d/<config>", "ip route"],
+        "L3": ["systemctl status containerd", "crictl ps", "crictl inspect <id>"],
+    }
+    if key in overrides:
+        return overrides[key]
+
+    layer_id = key[1:]
+    layer_meta = ELS_LAYERS.get(layer_id, {})
+    return layer_meta.get("debug", [])
+
 # --------------------------
 # Layer Definitions for Table UI
 # --------------------------
 # These are the visual rows used in the dashboard table.
 # They are related to ELS, but are primarily UI metadata for display.
 layers = [
-    ("9", "Applications", "User-facing application logic such as app binaries, web servers, APIs, and background workers running inside containers.", "application processes living inside containers", "user_process", "app specific", "L9"),
-    ("8", "Pods", "Pod abstraction wrapping one or more containers, restart policy, IP identity, and scheduling placement on nodes.", "kubelet-managed containers on nodes", "abstraction/meta", "kubectl get pods -o wide", "L8"),
-    ("7", "K8S Objects", "Desired-state resources stored in the API server such as Deployments, Services, ConfigMaps, Secrets, and NetworkPolicies.", "Persistent state (etcd via kube-apiserver)", "data", "kubectl get <resource>", "L7"),
-    ("6.5", "K8S API Layer", "Kubernetes API server and etcd as the cluster state entrypoint, persistence layer, and control-plane contract boundary.", "control-plane node (containers or processes)", "long_running_daemon", "kubectl cluster-info", "L6.5"),
-    ("6", "Operators", "Custom controllers with domain-specific logic, often shipped by platforms like Cilium, Calico, databases, and observability stacks.", "pods in cluster", "long_running_daemon", "kubectl get pods -n <operator-namespace>", "L6"),
-    ("5", "Controllers", "Core reconciliation loops such as kube-controller-manager, plus examples like Deployments, ReplicaSets, Jobs, and DaemonSets being continuously reconciled.", "kube-controller-manager static pod", "long_running_daemon", "kubectl get events", "L5"),
-    ("4.1", "kubelet", "Node-level control agent that watches PodSpecs and makes sure containers, volumes, probes, and restarts happen on each node.", "workers and control-plane nodes' systemd/PID1", "long_running_system_service", "systemctl status kubelet", "L4.1"),
-    ("4.2", "kube-proxy", "Service networking and virtual IP routing for Pods, unless some of that behavior is replaced by the active CNI dataplane.", "kube-system pod (or replaced by CNI dataplane)", "long_running_daemon", "iptables -L -n -v", "L4.2"),
-    ("4.3", "cni", "Container Network Interface plugin and node networking glue that wires pod networking, interfaces, routes, and policy-capable dataplanes.", "short-lived execution on node to wire pod networking", "short_lived_executable", "cluster: kubectl get pods -n kube-system ; kubectl get ds -n kube-system | node: ls /etc/cni/net.d/ ; cat /etc/cni/net.d/<config> ; ip route", "L4.3"),
-    ("3", "Container Runtime / CRI", "Node-level container management through CRI, handling image pulls, container lifecycle, and runtime coordination.", "systemd service on node", "cri_daemon", "crictl", "L3"),
-    ("2", "OCI (runc)", "Low-level OCI container executor invoked by the CRI runtime to create and start individual containers.", "invoked by CRI runtime", "short_lived_executable", "runc --version", "L2"),
-    ("1", "Kernel", "Linux namespaces, cgroups, networking, filesystems, and syscalls that ultimately enforce container isolation and connectivity.", "guest OS inside provider VM", "persistent_state_machine", "ip / proc / uname -r", "L1"),
-    ("0", "VM/Infra", "Virtualized CPU, memory, disks, and network interfaces provided by the underlying VM or infrastructure platform.", "hypervisor-provided abstraction", "virtualization_layer", "lscpu ; lsblk", "L0"),
+    ("9", "Applications", "User-facing application logic such as app binaries, web servers, APIs, and background workers running inside containers.", "application processes living inside containers", "user_process", _layer_debug_commands("L9"), "L9"),
+    ("8", "Pods", "Pod abstraction wrapping one or more containers, restart policy, IP identity, and scheduling placement on nodes.", "kubelet-managed containers on nodes", "abstraction/meta", _layer_debug_commands("L8"), "L8"),
+    ("7", "K8S Objects", "Desired-state resources stored in the API server such as Deployments, Services, ConfigMaps, Secrets, and NetworkPolicies.", "Persistent state (etcd via kube-apiserver)", "data", _layer_debug_commands("L7"), "L7"),
+    ("6.5", "K8S API Layer", "Kubernetes API server and etcd as the cluster state entrypoint, persistence layer, and control-plane contract boundary.", "control-plane node (containers or processes)", "long_running_daemon", _layer_debug_commands("L6.5"), "L6.5"),
+    ("6", "Operators", "Custom controllers with domain-specific logic, often shipped by platforms like Cilium, Calico, databases, and observability stacks.", "pods in cluster", "long_running_daemon", _layer_debug_commands("L6"), "L6"),
+    ("5", "Controllers", "Core reconciliation loops such as kube-controller-manager, plus examples like Deployments, ReplicaSets, Jobs, and DaemonSets being continuously reconciled.", "kube-controller-manager static pod", "long_running_daemon", _layer_debug_commands("L5"), "L5"),
+    ("4.1", "kubelet", "Node-level control agent that watches PodSpecs and makes sure containers, volumes, probes, and restarts happen on each node.", "workers and control-plane nodes' systemd/PID1", "long_running_system_service", _layer_debug_commands("L4.1"), "L4.1"),
+    ("4.2", "kube-proxy", "Service networking and virtual IP routing for Pods, unless some of that behavior is replaced by the active CNI dataplane.", "kube-system pod (or replaced by CNI dataplane)", "long_running_daemon", _layer_debug_commands("L4.2"), "L4.2"),
+    ("4.3", "cni", "Container Network Interface plugin and node networking glue that wires pod networking, interfaces, routes, and policy-capable dataplanes.", "short-lived execution on node to wire pod networking", "short_lived_executable", _layer_debug_commands("L4.3"), "L4.3"),
+    ("3", "Container Runtime / CRI", "Node-level container management through CRI, handling image pulls, container lifecycle, and runtime coordination.", "systemd service on node", "cri_daemon", _layer_debug_commands("L3"), "L3"),
+    ("2", "OCI (runc)", "Low-level OCI container executor invoked by the CRI runtime to create and start individual containers.", "invoked by CRI runtime", "short_lived_executable", _layer_debug_commands("L2"), "L2"),
+    ("1", "Kernel", "Linux namespaces, cgroups, networking, filesystems, and syscalls that ultimately enforce container isolation and connectivity.", "guest OS inside provider VM", "persistent_state_machine", _layer_debug_commands("L1"), "L1"),
+    ("0", "VM/Infra", "Virtualized CPU, memory, disks, and network interfaces provided by the underlying VM or infrastructure platform.", "hypervisor-provided abstraction", "virtualization_layer", _layer_debug_commands("L0"), "L0"),
 ]
 
 layer_options = [
@@ -768,6 +820,7 @@ rows = ""
 for lvl, name, description, lives, exec_type, api, key in layers:
     current, ok = summary.get(key, ("...", True))
     version = versions_map.get(key, "")
+    api_html = format_boundary_commands_html(api)
 
     # --- Status model ---
     # 🟢 = confirmed healthy
@@ -796,7 +849,7 @@ for lvl, name, description, lives, exec_type, api, key in layers:
         <td style="width:240px">{description}</td>
         <td style="width:240px">{lives}</td>
         <td style="width:180px">{exec_type}</td>
-        <td style="width:180px" class="small">{api}</td>
+        <td style="width:320px" class="small">{api_html}</td>
         <td>{current}</td>
     </tr>
     """
@@ -813,8 +866,8 @@ table_html += f"""
         <th style="width:240px">Description</th>
         <th style="width:240px">Lives</th>
         <th style="width:180px">Execution</th>
-        <th style="width:180px">API</th>
-        <th style="width:700px">Current Evidence</th>
+        <th style="width:320px">API boundary / CLI</th>
+        <th style="width:520px">Current Evidence</th>
     </tr>
     {rows}
 </table>
@@ -912,7 +965,8 @@ with st.container(border=True):
             st.write(selected_layer["lives"])
             st.write(f"Execution: {selected_layer['exec_type']}")
 
-        st.caption(f"Suggested debug entry point: `{selected_layer['api']}`")
+        st.markdown("**API boundary / CLI**")
+        st.code(format_boundary_commands_text(selected_layer["api"]))
         st.caption(f"Why this classification: {cni_classification.get('reason', 'unknown')}")
         if cni_classification.get("notes"):
             st.caption("Supporting notes: " + " ".join(cni_classification.get("notes", [])))
@@ -954,7 +1008,8 @@ with st.container(border=True):
         if selected_version:
             st.write(f"Version / identity: {selected_version}")
         st.write(f"Health / status: {status_label}")
-        st.caption(f"Suggested debug entry point: `{selected_layer['api']}`")
+        st.markdown("**API boundary / CLI**")
+        st.code(format_boundary_commands_text(selected_layer["api"]))
 
     if selected_key == "L4.3":
         st.caption(
@@ -998,11 +1053,16 @@ with st.expander("Explain", expanded=True):
                     st.warning(warning)
 
             els = parsed.get("els", {})
-            next_steps = els.get("next_steps", [])
-            if next_steps:
-                st.markdown("#### Next Steps")
-                for step in next_steps:
-                    st.write(f"- {step}")
+            guided_plan = els.get("guided_investigation_plan", [])
+            if guided_plan:
+                st.markdown("#### Next Steps (Guided Investigation Plan)")
+                render_guided_plan(guided_plan)
+            else:
+                next_steps = els.get("next_steps", [])
+                if next_steps:
+                    st.markdown("#### Next Steps")
+                    for step in next_steps:
+                        st.write(f"- {step}")
 
         with explain_tab_learning:
             learning = parsed.get("learning", {})

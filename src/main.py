@@ -130,14 +130,24 @@ def ask(
     # except for Next Steps and Warnings
     # -------------------------
     if concise:
-        next_steps = (
-            result.get("next_steps")
-            or result.get("els", {}).get("next_steps", [])
-        )
-        if next_steps:
-            print("\n[bold]Next Steps[/bold]")
-            for step in next_steps:
-                print(f"- {step}")
+        guided_plan = result.get("els", {}).get("guided_investigation_plan", [])
+        if guided_plan:
+            print("\n[bold]Next Steps (Guided Investigation Plan)[/bold]")
+            for idx, step in enumerate(guided_plan, start=1):
+                print(f"\n[bold]Step {idx}: {step.get('title', '')}[/bold]")
+                print(f"Why: {step.get('why', '')}")
+                for command in step.get("commands", []):
+                    print(f"  {command}")
+                print(f"Interpretation: {step.get('interpretation', '')}")
+        else:
+            next_steps = (
+                result.get("next_steps")
+                or result.get("els", {}).get("next_steps", [])
+            )
+            if next_steps:
+                print("\n[bold]Next Steps[/bold]")
+                for step in next_steps:
+                    print(f"- {step}")
 
         warnings = result.get("warnings", [])
         if warnings:
@@ -161,11 +171,21 @@ def ask(
     #print(f"Layer Name: {els.get('layer_name', '')}")
     #print(els.get("explanation", ""))
 
-    next_steps = els.get("next_steps", [])
-    if next_steps:
-        print("\n[bold]Next Steps[/bold]")
-        for step in next_steps:
-            print(f"- {step}")
+    guided_plan = els.get("guided_investigation_plan", [])
+    if guided_plan:
+        print("\n[bold]Next Steps (Guided Investigation Plan)[/bold]")
+        for idx, step in enumerate(guided_plan, start=1):
+            print(f"\n[bold]Step {idx}: {step.get('title', '')}[/bold]")
+            print(f"Why: {step.get('why', '')}")
+            for command in step.get("commands", []):
+                print(f"  {command}")
+            print(f"Interpretation: {step.get('interpretation', '')}")
+    else:
+        next_steps = els.get("next_steps", [])
+        if next_steps:
+            print("\n[bold]Next Steps[/bold]")
+            for step in next_steps:
+                print(f"- {step}")
 
     # ----------
     # Learning

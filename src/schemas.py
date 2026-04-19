@@ -1,4 +1,11 @@
-from typing import List, TypedDict
+from typing import Any, List, TypedDict
+
+
+class InvestigationStep(TypedDict, total=False):
+    title: str
+    why: str
+    commands: List[str]
+    interpretation: str
 
 
 class ELSResult(TypedDict, total=False):
@@ -12,6 +19,7 @@ class ELSResult(TypedDict, total=False):
     layer_name: str
     explanation: str
     next_steps: List[str]
+    guided_investigation_plan: List[InvestigationStep]
     mapped_context: dict
 
 
@@ -51,6 +59,7 @@ class CoachResponse(TypedDict, total=False):
     learning: LearningResult
     agent_trace: List[AgentTraceStep]
     warnings: List[str]
+    next_steps: List[Any]
 
     # Used when model parsing fails but we still want to surface the raw text.
     raw_text: str

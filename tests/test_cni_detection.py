@@ -10,6 +10,7 @@ sys.path.append(os.path.join(os.path.dirname(__file__), "..", "src"))
 
 import dashboard_presenters
 import state_collector
+import command_boundaries
 
 
 class TestCniDetection(unittest.TestCase):
@@ -1152,6 +1153,26 @@ class TestCniDetection(unittest.TestCase):
         self.assertEqual(result["basis"], "historical_context")
         self.assertIn("historical", result["summary"])
         self.assertEqual(len(result["relevant_lines"]), 2)
+
+    def test_boundary_formatter_groups_cluster_and_node_commands(self):
+        result = command_boundaries.normalize_boundary_commands(
+            [
+                "kubectl get pods -A",
+                "systemctl status kubelet",
+                "ip route",
+            ]
+        )
+
+        self.assertEqual(result["Cluster"], ["kubectl get pods -A"])
+        self.assertEqual(result["Node"], ["systemctl status kubelet", "ip route"])
+
+    def test_boundary_formatter_renders_one_command_per_line(self):
+        rendered = command_boundaries.format_boundary_commands_text(
+            ["kubectl get pods -A", "systemctl status kubelet"]
+        )
+
+        self.assertIn("Cluster:\n  kubectl get pods -A", rendered)
+        self.assertIn("Node:\n  systemctl status kubelet", rendered)
 
     def test_load_cni_provenance_missing_is_graceful(self):
         result = state_collector._load_cni_provenance("Error from server (NotFound): configmaps \"cka-coach-provenance\" not found")

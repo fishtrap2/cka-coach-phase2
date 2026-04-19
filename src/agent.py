@@ -6,6 +6,7 @@ from schemas import CoachResponse, ELSResult
 from els import load_els_model
 from els_model import ELS_LAYERS
 from els_mapper import map_to_els
+from command_boundaries import normalize_boundary_commands, format_boundary_commands_text
 
 # OpenAI client used for the explanatory / teaching layer.
 # Important: the model is no longer the owner of the ELS logic.
@@ -327,6 +328,157 @@ def choose_primary_els_layer(question: str, normalized_state: dict) -> tuple[str
     return "L7 kubernetes_objects", "7"
 
 
+def _first_meaningful_line(text: str) -> str:
+    for line in (text or "").splitlines():
+        stripped = line.strip()
+        if stripped and "No strong evidence" not in stripped:
+            return stripped
+    return "Current evidence is limited, so start from the nearest inspection boundary."
+
+
+def _build_cni_guided_plan(collected_state: dict) -> list[dict]:
+    runtime = collected_state.get("runtime", {})
+    evidence = collected_state.get("evidence", {}).get("cni", {})
+    summary_versions = collected_state.get("summary", {}).get("versions", {})
+    cni_name = summary_versions.get("cni", collected_state.get("versions", {}).get("cni", "unknown"))
+    classification = evidence.get("classification", {})
+    cluster_level = evidence.get("cluster_level", {})
+    node_level = evidence.get("node_level", {})
+    cluster_footprint = evidence.get("cluster_footprint", {})
+    calico_runtime = evidence.get("calico_runtime", {})
+    event_history = evidence.get("event_history", {})
+    selected_file = node_level.get("selected_file", "") or "<config>"
+    matched_pods = cluster_level.get("matched_pods", [])
+    daemonset_count = cluster_footprint.get("daemonset_count", 0)
+    cluster_commands = [
+        "kubectl get pods -n kube-system",
+        "kubectl get ds -n kube-system",
+    ]
+    node_commands = [
+        "ls /etc/cni/net.d/",
+        f"cat /etc/cni/net.d/{selected_file}",
+        "ip route",
+    ]
+    if cni_name == "calico" and calico_runtime.get("pod"):
+        cluster_commands.append(
+            f"kubectl -n kube-system exec {calico_runtime.get('pod')} -- birdcl show protocols"
+        )
+
+    plan = [
+        {
+            "title": "Validate the current cluster CNI footprint",
+            "why": (
+                f"The current classification is {classification.get('state', 'unknown')}, and the strongest current-state check is whether "
+                f"{cni_name} pods and daemonsets are still present right now."
+            ),
+            "commands": cluster_commands,
+            "interpretation": (
+                f"If kube-system still shows the expected {cni_name} footprint and daemonsets are Ready, continue to node config and datapath checks. "
+                "If the footprint is absent or mismatched, treat the state as stale or transitional rather than assuming the old plugin is still active."
+            ),
+        },
+        {
+            "title": "Verify node-level config provenance",
+            "why": (
+                f"Node-level evidence currently points to {node_level.get('cni', 'unknown')} via {selected_file}, so confirm whether the node config matches the live cluster footprint."
+            ),
+            "commands": node_commands,
+            "interpretation": (
+                "If the config file names the same plugin as the current cluster footprint, the node and cluster evidence agree. "
+                "If the file still names a different plugin, this is stale_node_config or mixed_or_transitional rather than a generic CNI state."
+            ),
+        },
+    ]
+
+    if cni_name == "calico" and calico_runtime.get("status") != "not_applicable":
+        plan.append(
+            {
+                "title": "Confirm the live Calico datapath before trusting old events",
+                "why": (
+                    "Direct runtime evidence from calico-node is more trustworthy for current health than historical readiness or restart events."
+                ),
+                "commands": [f"kubectl -n kube-system exec {calico_runtime.get('pod', '<calico-node-pod>')} -- birdcl show protocols"],
+                "interpretation": (
+                    "If BGP peers are Established, the datapath is live enough to treat old event warnings as historical context. "
+                    "If BIRD is not ready or peers are missing, the active networking issue is still in the CNI datapath."
+                ),
+            }
+        )
+
+    if event_history.get("relevant_lines"):
+        plan.append(
+            {
+                "title": "Correlate current state with recent transitions",
+                "why": "Recent events can explain why the cluster entered a stale or transitional state, but they should not override stronger current-state evidence.",
+                "commands": ["kubectl get events -A --sort-by=.lastTimestamp"],
+                "interpretation": (
+                    "Use events to understand timing and restarts. If events mention the old plugin but current pods, daemonsets, and config disagree, trust the current-state checks first."
+                ),
+            }
+        )
+
+    return plan[:4]
+
+
+def _build_generic_guided_plan(layer_num: str, layer_name: str, mapped_context: str, debug_cmds: list[str]) -> list[dict]:
+    grouped = normalize_boundary_commands(debug_cmds)
+    evidence_line = _first_meaningful_line(mapped_context)
+    plan: list[dict] = []
+
+    titles = {
+        "8": "Validate current pod state",
+        "7": "Inspect the desired-state object first",
+        "6.5": "Confirm API/control-plane reachability",
+        "6": "Inspect the operator control loop",
+        "5": "Check reconciliation behavior closest to the symptom",
+        "4": "Inspect the active node boundary first",
+        "3": "Validate the container runtime service",
+        "2": "Check the low-level OCI executor path",
+        "1": "Inspect the kernel-facing substrate",
+        "0": "Validate the virtual infrastructure surface",
+        "9": "Inspect the user workload directly",
+    }
+
+    why = f"The strongest current evidence for {layer_name} is: {evidence_line}"
+    if grouped.get("Cluster"):
+        plan.append(
+            {
+                "title": titles.get(layer_num, "Start at the nearest cluster-facing boundary"),
+                "why": why,
+                "commands": grouped["Cluster"],
+                "interpretation": (
+                    "If the cluster-facing view matches the expected objects or status, move one layer lower. "
+                    "If it already looks wrong here, the issue is still in this layer's control surface."
+                ),
+            }
+        )
+    if grouped.get("Node"):
+        plan.append(
+            {
+                "title": "Validate the node/runtime boundary",
+                "why": f"{layer_name} also depends on local runtime evidence, so check the node-facing surface next.",
+                "commands": grouped["Node"],
+                "interpretation": (
+                    "If node-facing state is healthy and consistent, the problem likely sits higher in the stack. "
+                    "If node-facing state is unhealthy, stay in this layer before moving outward."
+                ),
+            }
+        )
+    if layer_num not in {"5", "7"}:
+        plan.append(
+            {
+                "title": "Correlate with recent cluster events",
+                "why": "Events help explain recent restarts, reconciliations, or transitions that led to the current state.",
+                "commands": ["kubectl get events -A --sort-by=.lastTimestamp"],
+                "interpretation": (
+                    "Use events to explain timing and sequence. Treat them as supporting context rather than proof of current health if stronger current-state evidence exists."
+                ),
+            }
+        )
+
+    return plan[:4]
+
+
 def build_deterministic_els_result(question: str, collected_state: dict) -> ELSResult:
     """
     Build the deterministic ELS result used as authoritative project logic.
@@ -362,6 +514,7 @@ def build_deterministic_els_result(question: str, collected_state: dict) -> ELSR
 
     layer_name = layer_meta.get("name", primary_layer_key)
     debug_cmds = layer_meta.get("debug", [])
+    mapped_context = mapped.get(primary_layer_key, "")
 
     explanation = (
         f"Based on the current question and collected context, the most relevant ELS layer is "
@@ -370,10 +523,17 @@ def build_deterministic_els_result(question: str, collected_state: dict) -> ELSR
         f"and the structured cluster evidence."
     )
 
-    # Prefer schema-derived debug commands when available.
-    next_steps = debug_cmds[:] if debug_cmds else [
-        "Inspect the most relevant cluster object and work down the stack."
-    ]
+    if layer_num == "4":
+        guided_plan = _build_cni_guided_plan(collected_state)
+    else:
+        guided_plan = _build_generic_guided_plan(
+            str(layer_num),
+            layer_name,
+            mapped_context,
+            debug_cmds,
+        )
+
+    next_steps = [step.get("title", "") for step in guided_plan]
 
     return {
         "layer": primary_layer_key,
@@ -381,6 +541,7 @@ def build_deterministic_els_result(question: str, collected_state: dict) -> ELSR
         "layer_name": layer_name,
         "explanation": explanation,
         "next_steps": next_steps,
+        "guided_investigation_plan": guided_plan,
         "mapped_context": mapped,
     }
 
@@ -424,6 +585,7 @@ def normalize_response(raw: str) -> CoachResponse:
                 "layer_name": "",
                 "explanation": "Model did not return valid JSON.",
                 "next_steps": [],
+                "guided_investigation_plan": [],
                 "mapped_context": {},
             },
             "learning": {
@@ -594,7 +756,8 @@ Return JSON with exactly this shape:
     "layer": "primary ELS layer",
     "layer_number": "ELS number",
     "explanation": "ELS-based reasoning",
-    "next_steps": ["step 1", "step 2"]
+    "next_steps": ["step 1", "step 2"],
+    "guided_investigation_plan": []
   }},
   "learning": {{
     "kubernetes": "what this teaches about Kubernetes",
@@ -636,6 +799,7 @@ Return JSON with exactly this shape:
                 "layer_name": "",
                 "explanation": "",
                 "next_steps": [],
+                "guided_investigation_plan": [],
                 "mapped_context": {},
             },
             "learning": {

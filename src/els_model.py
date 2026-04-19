@@ -1,4 +1,5 @@
 from els import load_els_model
+from command_boundaries import normalize_boundary_commands
 
 
 def build_els_layers():
@@ -16,6 +17,7 @@ def build_els_layers():
             "depends_on": layer.get("depends_on", []),
             "primary_interfaces": layer.get("primary_interfaces", []),
             "debug": layer.get("debug_commands", []),
+            "debug_boundaries": normalize_boundary_commands(layer.get("debug_commands", [])),
         }
 
         # Preserve subcomponents for layer 4
