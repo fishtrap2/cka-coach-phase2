@@ -112,6 +112,11 @@ body {
     color: #fdba74;
 }
 
+.family-alert {
+    background: #4a2323;
+    color: #fca5a5;
+}
+
 .plane-separator td {
     height: 10px;
     padding: 0;
@@ -961,6 +966,7 @@ st.html(
       <div class="family-chip family-blue">Blue = applications / desired state</div>
       <div class="family-chip family-green">Green = reconciliation / source of truth</div>
       <div class="family-chip family-orange">Brown = node / runtime / dataplane</div>
+      <div class="family-chip family-alert">Purple/red shading = not healthy or visibility-limited; investigate before trusting this layer</div>
     </div>
     """
 )
