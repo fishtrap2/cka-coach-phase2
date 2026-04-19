@@ -86,8 +86,10 @@ def normalize_collected_state(collected_state: dict) -> dict:
     cni_health = health.get("cni_ok", "unknown")
     capabilities = cni_evidence.get("capabilities", {})
     cluster_footprint = cni_evidence.get("cluster_footprint", {})
+    daemonset_text = json.dumps(cluster_footprint.get("daemonsets", []), indent=2)
     calico_runtime = cni_evidence.get("calico_runtime", {})
     classification = cni_evidence.get("classification", {})
+    event_history = cni_evidence.get("event_history", {})
     provenance = cni_evidence.get("provenance", {})
     policy_presence = cni_evidence.get("policy_presence", {})
     version = cni_evidence.get("version", {})
@@ -102,7 +104,7 @@ def normalize_collected_state(collected_state: dict) -> dict:
 
     missing_or_unverified = []
     if cluster_level.get("cni", "unknown") == "unknown":
-        missing_or_unverified.append("No recognized kube-system CNI pod names were detected.")
+        missing_or_unverified.append("Current cluster footprint does not confirm an active CNI from kube-system pod names.")
     elif not matched_pods:
         missing_or_unverified.append("Cluster-level pod evidence is limited, so the full CNI component footprint is not fully visible.")
     if node_level.get("cni", "unknown") == "unknown":
@@ -144,12 +146,21 @@ def normalize_collected_state(collected_state: dict) -> dict:
         f"confidence: {cni_evidence.get('confidence', 'low')}\n"
         f"health/status meaning: {cni_health}\n\n"
         "[cluster-level evidence]\n"
+        "primary cluster checks:\n"
+        "kubectl get pods -n kube-system\n"
+        "kubectl get ds -n kube-system\n"
         f"detected cni: {cluster_level.get('cni', 'unknown')}\n"
         f"confidence: {cluster_level.get('confidence', 'low')}\n"
         f"selected pod: {cluster_level.get('selected_pod', '') or '(none)'}\n"
         "matched kube-system pods:\n"
-        f"{matched_pod_text}\n\n"
+        f"{matched_pod_text}\n"
+        "current matching daemonsets:\n"
+        f"{daemonset_text}\n\n"
         "[node-level evidence]\n"
+        "primary node checks:\n"
+        "ls /etc/cni/net.d/\n"
+        "cat /etc/cni/net.d/<config>\n"
+        "ip route\n"
         f"detected cni: {node_level.get('cni', 'unknown')}\n"
         f"confidence: {node_level.get('confidence', 'low')}\n"
         f"selected file: {node_level.get('selected_file', '') or '(none)'}\n"
@@ -198,6 +209,10 @@ def normalize_collected_state(collected_state: dict) -> dict:
         f"file: {config_spec_version.get('file', '') or '(none)'}\n"
         "selected config content:\n"
         f"{config_content or '(none)'}\n\n"
+        "[historical events / recent transitions]\n"
+        f"summary: {event_history.get('summary', 'no relevant CNI event history collected')}\n"
+        f"relevant lines: {json.dumps(event_history.get('relevant_lines', []), indent=2)}\n"
+        "Use this section as historical transition context, not as the primary basis for current CNI identification.\n\n"
         "[policy presence summary]\n"
         f"status: {policy_label}\n"
         f"count: {policy_presence.get('count', 0)}\n"
@@ -540,6 +555,9 @@ Use precise language:
 - keep health/status meaning aligned with primary_layer_context; if it says unknown, describe visibility as limited rather than healthy or degraded
 - only describe the CNI as healthy when primary_layer_context explicitly says health/status meaning: healthy
 - use the normalized classification and provenance sections when present to explain whether the state looks healthy, mixed, stale, or transitional
+- prioritize current cluster evidence (pods, daemonsets, direct runtime checks) and current node evidence (config files, config content, routes) over historical event mentions
+- if current cluster footprint is absent but node config explicitly says Calico or Cilium, say that directly and use stale_node_config or mixed_or_transitional wording rather than generic_cni
+- treat any historical events / recent transitions section as supporting context about recent changes, not as the primary basis for current CNI identification
 - do not warn that generic pod listings are truncated if primary_layer_context already contains sufficient cluster-level CNI evidence
 - only warn about incomplete, weak, or conflicting evidence when the primary_layer_context itself shows that limitation
 """

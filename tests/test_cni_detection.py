@@ -1056,6 +1056,40 @@ class TestCniDetection(unittest.TestCase):
 
         self.assertEqual(result["state"], "generic_cni")
 
+    def test_classify_cni_state_node_level_calico_without_cluster_footprint_is_not_generic(self):
+        runtime = {"nodes": "cp Ready\nworker1 Ready\n", "pods": "default app 1/1 Running\n", "nodes_json": "{}", "network": ""}
+        versions = {"cni": "calico"}
+        evidence = {
+            "confidence": "medium",
+            "reconciliation": "single_source",
+            "migration_note": "Only one evidence source identifies the current CNI, so the result remains partially unverified.",
+            "node_level": {"cni": "calico"},
+            "cluster_level": {"cni": "unknown"},
+            "cluster_footprint": {"daemonsets": []},
+            "calico_runtime": {"status": "unknown"},
+        }
+
+        result = state_collector._classify_cni_state(runtime, versions, evidence, {"cni_ok": "unknown"})
+
+        self.assertEqual(result["state"], "stale_node_config")
+
+    def test_classify_cni_state_node_level_cilium_without_cluster_footprint_is_not_generic(self):
+        runtime = {"nodes": "cp Ready\nworker1 Ready\n", "pods": "default app 1/1 Running\n", "nodes_json": "{}", "network": ""}
+        versions = {"cni": "cilium"}
+        evidence = {
+            "confidence": "medium",
+            "reconciliation": "single_source",
+            "migration_note": "Only one evidence source identifies the current CNI, so the result remains partially unverified.",
+            "node_level": {"cni": "cilium"},
+            "cluster_level": {"cni": "unknown"},
+            "cluster_footprint": {"daemonsets": []},
+            "calico_runtime": {"status": "not_applicable"},
+        }
+
+        result = state_collector._classify_cni_state(runtime, versions, evidence, {"cni_ok": "unknown"})
+
+        self.assertEqual(result["state"], "stale_node_config")
+
     def test_classify_cni_state_no_cni(self):
         runtime = {"nodes": "cp NotReady\n", "pods": "", "nodes_json": "{}", "network": ""}
         versions = {"cni": "unknown"}
@@ -1106,6 +1140,18 @@ class TestCniDetection(unittest.TestCase):
         result = state_collector._classify_cni_state(runtime, versions, evidence, {"cni_ok": "unknown"})
 
         self.assertEqual(result["state"], "stale_node_config")
+
+    def test_summarize_cni_event_history_treats_events_as_historical_context(self):
+        events_text = (
+            "kube-system calico-node-abcde Readiness probe failed: BGP not established\n"
+            "kube-system calico-kube-controllers-12345 Started container\n"
+        )
+
+        result = state_collector._summarize_cni_event_history(events_text, "calico")
+
+        self.assertEqual(result["basis"], "historical_context")
+        self.assertIn("historical", result["summary"])
+        self.assertEqual(len(result["relevant_lines"]), 2)
 
     def test_load_cni_provenance_missing_is_graceful(self):
         result = state_collector._load_cni_provenance("Error from server (NotFound): configmaps \"cka-coach-provenance\" not found")

@@ -297,6 +297,7 @@ def format_cni_detection_evidence(state: dict) -> str:
     cluster_footprint = detection.get("cluster_footprint", {})
     calico_runtime = detection.get("calico_runtime", {})
     classification = detection.get("classification", {})
+    event_history = detection.get("event_history", {})
     provenance = detection.get("provenance", {})
     policy_presence = detection.get("policy_presence", {})
     version = detection.get("version", {})
@@ -355,6 +356,12 @@ def format_cni_detection_evidence(state: dict) -> str:
         f"operator present: {cluster_footprint.get('operator_present', False)}\n"
         f"daemonset count: {cluster_footprint.get('daemonset_count', 0)}\n"
         f"daemonsets: {json.dumps(cluster_footprint.get('daemonsets', []), indent=2)}\n\n"
+        "[direct evidence entry points]\n"
+        "cluster: kubectl get pods -n kube-system\n"
+        "cluster: kubectl get ds -n kube-system\n"
+        "node: ls /etc/cni/net.d/\n"
+        "node: cat /etc/cni/net.d/<config>\n"
+        "node: ip route\n\n"
         "[normalized classification]\n"
         f"state: {classification.get('state', 'unknown')}\n"
         f"reason: {classification.get('reason', 'unknown')}\n"
@@ -368,6 +375,9 @@ def format_cni_detection_evidence(state: dict) -> str:
         f"cleaned by: {provenance.get('cleaned_by', '') or '(unknown)'}\n"
         f"last install observed at: {provenance.get('last_install_observed_at', '') or '(unknown)'}\n"
         f"evidence basis: {provenance.get('evidence_basis', 'unknown')}\n\n"
+        "[historical events / recent transitions]\n"
+        f"summary: {event_history.get('summary', 'no relevant CNI event history collected')}\n"
+        f"relevant lines: {json.dumps(event_history.get('relevant_lines', []), indent=2)}\n\n"
         "[calico runtime evidence]\n"
         f"summary: {calico_runtime.get('summary', 'not applicable for current CNI')}\n"
         f"status: {calico_runtime.get('status', 'unknown')}\n"
@@ -690,7 +700,7 @@ layers = [
     ("5", "Controllers", "Core reconciliation loops such as kube-controller-manager, plus examples like Deployments, ReplicaSets, Jobs, and DaemonSets being continuously reconciled.", "kube-controller-manager static pod", "long_running_daemon", "kubectl get events", "L5"),
     ("4.1", "kubelet", "Node-level control agent that watches PodSpecs and makes sure containers, volumes, probes, and restarts happen on each node.", "workers and control-plane nodes' systemd/PID1", "long_running_system_service", "systemctl status kubelet", "L4.1"),
     ("4.2", "kube-proxy", "Service networking and virtual IP routing for Pods, unless some of that behavior is replaced by the active CNI dataplane.", "kube-system pod (or replaced by CNI dataplane)", "long_running_daemon", "iptables -L -n -v", "L4.2"),
-    ("4.3", "cni", "Container Network Interface plugin and node networking glue that wires pod networking, interfaces, routes, and policy-capable dataplanes.", "short-lived execution on node to wire pod networking", "short_lived_executable", "ls /etc/cni/net.d/ ; ip route", "L4.3"),
+    ("4.3", "cni", "Container Network Interface plugin and node networking glue that wires pod networking, interfaces, routes, and policy-capable dataplanes.", "short-lived execution on node to wire pod networking", "short_lived_executable", "cluster: kubectl get pods -n kube-system ; kubectl get ds -n kube-system | node: ls /etc/cni/net.d/ ; cat /etc/cni/net.d/<config> ; ip route", "L4.3"),
     ("3", "Container Runtime / CRI", "Node-level container management through CRI, handling image pulls, container lifecycle, and runtime coordination.", "systemd service on node", "cri_daemon", "crictl", "L3"),
     ("2", "OCI (runc)", "Low-level OCI container executor invoked by the CRI runtime to create and start individual containers.", "invoked by CRI runtime", "short_lived_executable", "runc --version", "L2"),
     ("1", "Kernel", "Linux namespaces, cgroups, networking, filesystems, and syscalls that ultimately enforce container isolation and connectivity.", "guest OS inside provider VM", "persistent_state_machine", "ip / proc / uname -r", "L1"),

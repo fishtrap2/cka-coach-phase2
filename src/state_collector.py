@@ -984,6 +984,45 @@ def _load_cni_provenance(configmap_json: str) -> Dict[str, Any]:
     }
 
 
+def _summarize_cni_event_history(events_text: str, current_cni: str) -> Dict[str, Any]:
+    """
+    Summarize CNI-related event history as historical context, not primary current-state proof.
+    """
+    if not events_text.strip() or "kubectl not installed" in events_text.lower():
+        return {
+            "summary": "no relevant CNI event history collected",
+            "relevant_lines": [],
+            "basis": "historical_context",
+        }
+
+    patterns = []
+    if current_cni == "calico":
+        patterns = ["calico-node", "calico-kube-controllers", "bird", "bgp"]
+    elif current_cni == "cilium":
+        patterns = ["cilium", "cilium-envoy", "cilium-operator"]
+    else:
+        patterns = ["calico", "cilium", "flannel", "weave", "canal"]
+
+    relevant_lines = []
+    for line in events_text.splitlines():
+        lower = line.lower()
+        if any(pattern in lower for pattern in patterns):
+            relevant_lines.append(line.strip())
+        if len(relevant_lines) >= 5:
+            break
+
+    if not relevant_lines:
+        summary = "no recent CNI-specific events matched the current evidence"
+    else:
+        summary = f"historical CNI-related events observed={len(relevant_lines)}"
+
+    return {
+        "summary": summary,
+        "relevant_lines": relevant_lines,
+        "basis": "historical_context",
+    }
+
+
 def _classify_cni_state(
     runtime: Dict[str, str],
     versions: Dict[str, str],
@@ -1034,11 +1073,20 @@ def _classify_cni_state(
         and cluster_cni == "cilium"
         and any(ds.get("name") == "cilium" for ds in cluster_footprint.get("daemonsets", []))
     )
+    named_plugin_present = any(
+        cni in {"calico", "cilium"} for cni in {cni_text, node_cni, cluster_cni}
+    )
 
     if node_cni not in {"", "unknown"} and cluster_cni not in {"", "unknown"} and node_cni != cluster_cni:
         state = "stale_node_config"
         reason = (
             f"Cluster evidence indicates {cluster_cni}, but node-level config still references {node_cni}."
+        )
+    elif node_cni in {"calico", "cilium"} and cluster_cni in {"", "unknown"}:
+        state = "stale_node_config"
+        reason = (
+            f"Current cluster footprint does not confirm an active {node_cni} installation, "
+            f"but node-level CNI config still points to {node_cni}."
         )
     elif stale_taints.get("detected"):
         state = "stale_taint"
@@ -1065,6 +1113,9 @@ def _classify_cni_state(
     elif cni_text not in {"", "unknown"} and cni_text not in {"calico", "cilium"}:
         state = "generic_cni"
         reason = "A non-specific or generic CNI signal was detected without strong Calico or Cilium evidence."
+    elif named_plugin_present:
+        state = "mixed_or_transitional"
+        reason = "A named CNI plugin is indicated by some evidence, but current cluster and node signals do not cleanly agree."
     else:
         state = "generic_cni"
         reason = "Available networking evidence is functional but does not fit a stronger normalized CNI state."
@@ -1529,6 +1580,10 @@ def collect_state(
         node_cni_detection,
         cluster_cni_detection,
     )
+    event_history = _summarize_cni_event_history(
+        runtime.get("events", ""),
+        combined_cni_detection.get("cni", "unknown"),
+    )
     provenance = _load_cni_provenance(runtime.get("cni_provenance_configmap", ""))
 
     versions = {
@@ -1564,6 +1619,7 @@ def collect_state(
             "config_spec_version": cni_config_spec_version,
             "config_content": cni_config_content,
             "migration_note": migration_note,
+            "event_history": event_history,
             "provenance": provenance,
             "node_level": node_cni_detection,
             "cluster_level": cluster_cni_detection,
