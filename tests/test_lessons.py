@@ -157,6 +157,24 @@ class TestLessons(unittest.TestCase):
         self.assertTrue(local_entry["cleanup_required"])
         self.assertIn("stale_interfaces", local_entry["residue_types"])
 
+    def test_cleanup_lesson_keeps_local_cleanup_target_when_hostname_does_not_match_node_name(self):
+        state = _base_state()
+        state["runtime"]["hostname"] = "student-lab-host"
+        state["evidence"]["cni"]["classification"]["state"] = "stale_interfaces"
+        state["evidence"]["cni"]["classification"]["stale_interfaces"] = {
+            "detected": True,
+            "interfaces": ["tunl0"],
+            "summary": "stale interfaces detected (tunl0)",
+        }
+        state["runtime"]["network"] = "33: tunl0@NONE: <NOARP,UP,LOWER_UP> mtu 1440"
+
+        progress = lessons.default_lesson_progress()
+        progress.update({"inspect_ran": True, "classify_ran": True, "scripts_generated": True, "current_step": 2})
+        lesson = lessons.build_lesson_run("reset_networking_lab", state, progress)
+
+        self.assertIn("student-lab-host", lesson["cleanup_target_nodes"])
+        self.assertIn("student-lab-host", lesson["remediation_scripts"])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -284,7 +284,16 @@ def _build_per_node_status(
     stale_interface_names = stale_interfaces.get("interfaces", [])
 
     statuses = []
+    processed_nodes = set()
+    local_residue_detected = bool(
+        classification_state in {"stale_node_config", "stale_interfaces"}
+        or stale_interface_names
+        or iptables_presence["calico_iptables_present"] is True
+        or iptables_presence["cilium_iptables_present"] is True
+    )
+
     for node in node_names:
+        processed_nodes.add(node)
         local = node == local_node
         residue_types: List[str] = []
         cleanup_required = False
@@ -331,6 +340,33 @@ def _build_per_node_status(
                 "last_verified_at": now,
                 "cluster_pods": cluster_pod_nodes.get(node, []),
                 "local_visibility": local,
+            }
+        )
+
+    if local_node and local_node not in processed_nodes and local_residue_detected:
+        residue_types: List[str] = []
+        if classification_state == "stale_node_config":
+            residue_types.append("stale_node_config")
+        if stale_interface_names:
+            residue_types.append("stale_interfaces")
+        if iptables_presence["calico_iptables_present"] is True and current_cni != "calico":
+            residue_types.append("calico_iptables")
+        if iptables_presence["cilium_iptables_present"] is True and current_cni != "cilium":
+            residue_types.append("cilium_iptables")
+
+        statuses.append(
+            {
+                "node": local_node,
+                "scope": "Local node (unmatched to cluster node name)",
+                "cilium_interfaces_present": interface_presence["cilium_interfaces_present"],
+                "calico_interfaces_present": interface_presence["calico_interfaces_present"],
+                "calico_iptables_present": iptables_presence["calico_iptables_present"],
+                "current_classification": classification_state,
+                "residue_types": residue_types or ["local_residual_state"],
+                "cleanup_required": True,
+                "last_verified_at": now,
+                "cluster_pods": [],
+                "local_visibility": True,
             }
         )
     return statuses
