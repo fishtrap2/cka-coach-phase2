@@ -175,6 +175,13 @@ def _collect_networking_components(state: Dict) -> Dict[str, Dict[str, Any]]:
     return components
 
 
+def _observed_networking_namespaces(components: Dict[str, Dict[str, Any]]) -> List[str]:
+    namespaces = set()
+    for component in components.values():
+        namespaces.update(component.get("namespaces", set()))
+    return sorted(namespace for namespace in namespaces if namespace)
+
+
 def _component_version_row(label: str, tags: set[str], source: str) -> Dict[str, str]:
     if not tags:
         version = "not directly observed"
@@ -441,6 +448,7 @@ def build_networking_panel(state: Dict) -> Dict[str, Any]:
     }.get(policy_presence.get("status", "unknown"), policy_presence.get("status", "unknown"))
 
     components = _collect_networking_components(state)
+    networking_namespaces = _observed_networking_namespaces(components)
     goldmane_present = components.get("goldmane", {}).get("present", False)
     whisker_present = components.get("whisker", {}).get("present", False)
     if goldmane_present and whisker_present:
@@ -454,14 +462,17 @@ def build_networking_panel(state: Dict) -> Dict[str, Any]:
 
     cluster_evidence = []
     if cluster_level.get("cni", "unknown") not in {"", "unknown"}:
+        namespace_text = ", ".join(networking_namespaces[:3]) if networking_namespaces else "current cluster namespaces"
         cluster_evidence.append(
-            f"Cluster detection identifies {cluster_level.get('cni')} from kube-system pods / daemonsets."
+            f"Cluster detection identifies {cluster_level.get('cni')} from current pods, daemonsets, and platform objects across {namespace_text}."
         )
     if cluster_footprint.get("daemonsets"):
         daemonset_bits = []
         for ds in cluster_footprint.get("daemonsets", [])[:3]:
             daemonset_bits.append(f"{ds.get('name')} {ds.get('ready', '?')}/{ds.get('desired', '?')} ready")
         cluster_evidence.append("Daemonsets: " + ", ".join(daemonset_bits))
+    if networking_namespaces:
+        cluster_evidence.append("Observed networking namespaces: " + ", ".join(networking_namespaces[:4]))
     if platform_signals:
         cluster_evidence.append("Platform signals: " + ", ".join(platform_signals[:3]))
     if components.get("calico-kube-controllers", {}).get("present"):
