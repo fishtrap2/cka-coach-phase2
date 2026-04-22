@@ -10,9 +10,11 @@ sys.path.append(os.path.join(os.path.dirname(__file__), "..", "src"))
 from state_collector import collect_state
 from dashboard_presenters import (
     build_networking_panel,
+    build_network_visual_model,
     cni_config_spec_display,
     cni_status_label,
     cni_summary_text,
+    render_network_visual_html,
 )
 from agent import ask_llm
 from command_boundaries import format_boundary_commands_html, format_boundary_commands_text
@@ -1141,6 +1143,18 @@ with version_col:
             st.table(version_rows)
         else:
             st.caption("No current networking component versions were directly observed.")
+
+# --------------------------
+# Network Visual Panel
+# --------------------------
+st.divider()
+st.markdown("## Network Visual Panel")
+st.caption(
+    "Current cluster topology from Kubernetes objects down to overlay transport, node networking, and kernel / namespace reality."
+)
+
+network_visual_model = build_network_visual_model(state)
+st.html(render_network_visual_html(network_visual_model))
 
 # --------------------------
 # Active Lesson / Coaching Console

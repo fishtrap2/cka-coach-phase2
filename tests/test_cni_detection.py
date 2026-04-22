@@ -143,6 +143,97 @@ class TestCniDetection(unittest.TestCase):
         self.assertEqual(panel["mode"]["Encapsulation"], "unknown")
         self.assertEqual(panel["mode"]["BGP"], "unknown")
 
+    def test_build_network_visual_model_reflects_two_node_calico_topology(self):
+        state = {
+            "runtime": {
+                "hostname": "cp",
+                "network": (
+                    "1: lo: <LOOPBACK,UP,LOWER_UP> mtu 65536\n"
+                    "2: ens4: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1460\n"
+                    "21: cali50e56ce114b@if4: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1440\n"
+                    "30: vxlan.calico: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1450\n"
+                    "31: tunl0@NONE: <NOARP,UP,LOWER_UP> mtu 1440\n"
+                ),
+                "routes": "192.168.1.0/24 via 10.2.0.3 dev ens4 proto bird\n",
+                "nodes_json": json.dumps(
+                    {
+                        "items": [
+                            {
+                                "metadata": {
+                                    "name": "cp",
+                                    "labels": {"node-role.kubernetes.io/control-plane": ""},
+                                },
+                                "spec": {"podCIDR": "192.168.0.0/24", "podCIDRs": ["192.168.0.0/24"]},
+                                "status": {"addresses": [{"type": "InternalIP", "address": "10.2.0.2"}]},
+                            },
+                            {
+                                "metadata": {"name": "worker1", "labels": {}},
+                                "spec": {"podCIDR": "192.168.1.0/24", "podCIDRs": ["192.168.1.0/24"]},
+                                "status": {"addresses": [{"type": "InternalIP", "address": "10.2.0.3"}]},
+                            },
+                        ]
+                    }
+                ),
+                "pods_json": json.dumps(
+                    {
+                        "items": [
+                            {
+                                "metadata": {"namespace": "default", "name": "nginx-a"},
+                                "spec": {"nodeName": "cp"},
+                                "status": {"phase": "Running", "podIP": "192.168.0.10"},
+                            },
+                            {
+                                "metadata": {"namespace": "default", "name": "nginx-b"},
+                                "spec": {"nodeName": "worker1"},
+                                "status": {"phase": "Running", "podIP": "192.168.1.11"},
+                            },
+                            {
+                                "metadata": {"namespace": "calico-system", "name": "goldmane-123"},
+                                "spec": {"nodeName": "cp", "containers": [{"image": "docker.io/calico/goldmane:v3.27.0"}]},
+                                "status": {"phase": "Running", "podIP": "10.0.0.9"},
+                            },
+                        ]
+                    }
+                ),
+                "calico_installations_json": json.dumps(
+                    {
+                        "items": [
+                            {
+                                "spec": {
+                                    "calicoNetwork": {
+                                        "bgp": "Disabled",
+                                        "ipPools": [{"encapsulation": "VXLANCrossSubnet"}],
+                                        "linuxDataplane": "Iptables",
+                                    }
+                                }
+                            }
+                        ]
+                    }
+                ),
+                "calico_ippools_json": json.dumps(
+                    {"items": [{"spec": {"cidr": "192.168.0.0/16", "vxlanMode": "CrossSubnet"}}]}
+                ),
+            },
+            "summary": {"versions": {"cni": "calico"}},
+            "evidence": {
+                "cni": {
+                    "cluster_platform_signals": {"signals": ["calico ippool present"]},
+                    "capabilities": {"network_policy": True},
+                    "policy_presence": {"status": "present"},
+                    "calico_runtime": {"status": "unknown"},
+                }
+            },
+        }
+
+        model = dashboard_presenters.build_network_visual_model(state)
+
+        self.assertEqual(model["headline"]["cni"], "calico")
+        self.assertIn("VXLAN CrossSubnet", model["headline"]["overlay"])
+        self.assertEqual(len(model["nodes"]), 2)
+        self.assertEqual(model["nodes"][0]["name"], "cp")
+        self.assertEqual(model["nodes"][0]["pods"][0]["pod_ip"], "192.168.0.10")
+        self.assertIn("Goldmane", model["policy_observability"])
+
     def test_parse_calico_bird_protocols_established(self):
         output = (
             'Defaulted container "calico-node" out of: calico-node, install-cni (init)\n'
