@@ -1119,9 +1119,9 @@ with version_col:
 # Active Lesson / Coaching Console
 # --------------------------
 st.divider()
-st.markdown("## Active Lesson / Coaching Console")
+st.markdown("## Lessons")
 st.caption(
-    "Stay in one guided learning screen: choose a lesson, see exactly which nodes are involved, review coach actions, run reviewed commands, and re-check progress against live evidence."
+    "Lesson selection stays visible here. The active coaching console is temporarily collapsed while the networking and evidence views are being finished."
 )
 
 with st.expander("Lessons / available lessons", expanded=False):
@@ -1172,337 +1172,345 @@ lesson_run = (
     if available_lessons
     else {}
 )
-if lesson_run:
-    ensure_initial_lesson_audit(st.session_state, lesson_run["id"], lesson_run)
-    lesson_steps = lesson_run.get("steps", [])
-    current_step_index = lesson_run.get("current_step", 0)
-    active_step = lesson_steps[current_step_index] if lesson_steps else {}
-    lesson_audit = st.session_state.get(f"lesson_audit_{lesson_run['id']}", [])
-    lesson_notes_key = f"lesson_notes_{lesson_run['id']}"
-    lesson_input_key = f"lesson_note_input_{lesson_run['id']}"
-    target_nodes = active_step.get("target_nodes", [])
-    target_scope = active_step.get("target_scope", "")
+with st.expander("Active Lesson / Coaching Console — Under Construction", expanded=False):
+    st.caption(
+        "This guided lesson flow is paused while cka-coach's networking and verification surfaces are being tightened. "
+        "We’ll bring it back once the product is more complete."
+    )
 
-    def _persist_lesson_progress(updated_progress: dict, rerun: bool = True):
-        st.session_state[lesson_progress_key] = updated_progress
-        if rerun:
-            st.rerun()
+    if lesson_run:
+        ensure_initial_lesson_audit(st.session_state, lesson_run["id"], lesson_run)
+        lesson_steps = lesson_run.get("steps", [])
+        current_step_index = lesson_run.get("current_step", 0)
+        active_step = lesson_steps[current_step_index] if lesson_steps else {}
+        lesson_audit = st.session_state.get(f"lesson_audit_{lesson_run['id']}", [])
+        lesson_notes_key = f"lesson_notes_{lesson_run['id']}"
+        lesson_input_key = f"lesson_note_input_{lesson_run['id']}"
+        target_nodes = active_step.get("target_nodes", [])
+        target_scope = active_step.get("target_scope", "")
 
-    coach_col, student_col = st.columns([1.2, 1], gap="large")
-
-    with coach_col:
-        with st.container(border=True):
-            st.markdown("### Coach")
-            st.markdown("**What we are doing overall**")
-            st.write(lesson_run.get("overall_summary", ""))
-            st.caption(lesson_run.get("why_it_matters", ""))
-
-            progress_fraction = lesson_run.get("completion_percentage", 0) / 100
-            st.progress(progress_fraction)
-            st.caption(f"{lesson_run.get('completion_percentage', 0)}% complete")
-
-            st.markdown("**Current position in the lesson**")
-            st.write(lesson_run.get("current_position_summary", ""))
-            for note in lesson_run.get("nonblocking_notes", []):
-                st.info(note)
-            render_lesson_step_tracker(lesson_steps, current_step_index)
-
-            st.markdown("**Next step guidance**")
-            if active_step:
-                st.write(active_step.get("title", ""))
-                st.caption(active_step.get("why", ""))
-                st.markdown(f"**Scope:** {target_scope or '(unknown)'}")
-                st.markdown(
-                    "**Targets:** "
-                    + (", ".join(target_nodes) if target_nodes else "(none)")
-                )
-                st.markdown("**Coach can do now**")
-                st.write(active_step.get("coach_action", ""))
-                st.markdown("**Student must do**")
-                st.write(active_step.get("student_action", "None for this step."))
-                st.markdown("**Verification**")
-                st.caption(active_step.get("verification", ""))
-            else:
-                st.success("This lesson is complete.")
-
-            action_col1, action_col2 = st.columns([1, 1])
-            if action_col1.button("Refresh lesson state", key=f"lesson_refresh_{lesson_run['id']}"):
-                append_coach_audit(
-                    st.session_state,
-                    lesson_run["id"],
-                    active_step.get("id", "refresh"),
-                    target_scope or "Cluster",
-                    target_nodes,
-                    "refresh_state",
-                    "collect_state()",
-                    f"Lesson remains {lesson_run.get('status', 'paused')}.",
-                    state_changed=False,
-                    requires_student_action=active_step.get("student_must_do", False),
-                )
+        def _persist_lesson_progress(updated_progress: dict, rerun: bool = True):
+            st.session_state[lesson_progress_key] = updated_progress
+            if rerun:
                 st.rerun()
-            if active_step and active_step.get("status") in {"waiting_for_coach", "blocked"}:
-                coach_label = "Run coach step"
-                if active_step.get("id") == "generate_remediation_scripts":
-                    coach_label = "Generate student script"
-                elif active_step.get("id") == "confirm_baseline":
-                    coach_label = "Confirm lesson checkpoint"
 
-                if action_col2.button(coach_label, key=f"lesson_coach_step_{lesson_run['id']}"):
-                    updated = dict(lesson_progress)
-                    step_id = active_step.get("id")
-                    if step_id == "inspect_current_state":
-                        updated["inspect_ran"] = True
-                    elif step_id == "classify_cleanup_scope":
-                        updated["classify_ran"] = True
-                    elif step_id == "generate_remediation_scripts":
-                        updated["scripts_generated"] = True
-                    elif step_id == "recheck_target_nodes":
-                        updated["recheck_ran"] = True
-                    elif step_id == "confirm_baseline":
-                        updated["baseline_confirmed"] = lesson_run.get("baseline_ready", False)
+        coach_col, student_col = st.columns([1.2, 1], gap="large")
+
+        with coach_col:
+            with st.container(border=True):
+                st.markdown("### Coach")
+                st.markdown("**What we are doing overall**")
+                st.write(lesson_run.get("overall_summary", ""))
+                st.caption(lesson_run.get("why_it_matters", ""))
+
+                progress_fraction = lesson_run.get("completion_percentage", 0) / 100
+                st.progress(progress_fraction)
+                st.caption(f"{lesson_run.get('completion_percentage', 0)}% complete")
+
+                st.markdown("**Current position in the lesson**")
+                st.write(lesson_run.get("current_position_summary", ""))
+                for note in lesson_run.get("nonblocking_notes", []):
+                    st.info(note)
+                render_lesson_step_tracker(lesson_steps, current_step_index)
+
+                st.markdown("**Next step guidance**")
+                if active_step:
+                    st.write(active_step.get("title", ""))
+                    st.caption(active_step.get("why", ""))
+                    st.markdown(f"**Scope:** {target_scope or '(unknown)'}")
+                    st.markdown(
+                        "**Targets:** "
+                        + (", ".join(target_nodes) if target_nodes else "(none)")
+                    )
+                    st.markdown("**Coach can do now**")
+                    st.write(active_step.get("coach_action", ""))
+                    st.markdown("**Student must do**")
+                    st.write(active_step.get("student_action", "None for this step."))
+                    st.markdown("**Verification**")
+                    st.caption(active_step.get("verification", ""))
+                else:
+                    st.success("This lesson is complete.")
+
+                action_col1, action_col2 = st.columns([1, 1])
+                if action_col1.button("Refresh lesson state", key=f"lesson_refresh_{lesson_run['id']}"):
                     append_coach_audit(
                         st.session_state,
                         lesson_run["id"],
-                        step_id,
+                        active_step.get("id", "refresh"),
                         target_scope or "Cluster",
                         target_nodes,
-                        "coach_step",
-                        active_step.get("coach_action", ""),
-                        active_step.get("verification", ""),
-                        state_changed=step_id in {"generate_remediation_scripts"},
+                        "refresh_state",
+                        "collect_state()",
+                        f"Lesson remains {lesson_run.get('status', 'paused')}.",
+                        state_changed=False,
                         requires_student_action=active_step.get("student_must_do", False),
                     )
-                    _persist_lesson_progress(updated)
-            elif active_step and active_step.get("status") == "completed" and current_step_index < len(lesson_steps) - 1:
-                if action_col2.button("Continue to next step", key=f"lesson_continue_{lesson_run['id']}"):
-                    updated = dict(lesson_progress)
-                    updated["current_step"] = current_step_index + 1
-                    append_coach_audit(
-                        st.session_state,
-                        lesson_run["id"],
-                        active_step.get("id", "continue"),
-                        target_scope or "Cluster",
-                        target_nodes,
-                        "continue",
-                        "advance lesson pointer",
-                        f"Moved to step {current_step_index + 2}.",
-                        state_changed=False,
-                        requires_student_action=False,
-                    )
-                    _persist_lesson_progress(updated)
+                    st.rerun()
+                if active_step and active_step.get("status") in {"waiting_for_coach", "blocked"}:
+                    coach_label = "Run coach step"
+                    if active_step.get("id") == "generate_remediation_scripts":
+                        coach_label = "Generate student script"
+                    elif active_step.get("id") == "confirm_baseline":
+                        coach_label = "Confirm lesson checkpoint"
 
-            st.markdown("**Coach audit trail**")
-            if lesson_audit:
-                for entry in lesson_audit[:6]:
-                    with st.expander(
-                        f"{entry.get('timestamp', '')} — {entry.get('step_id', '')} — {entry.get('action_type', '')}",
-                        expanded=False,
-                    ):
-                        st.write(f"Scope: {entry.get('node_scope', '')}")
-                        st.write(
-                            "Targets: "
-                            + (", ".join(entry.get("target_nodes", [])) or "(none)")
+                    if action_col2.button(coach_label, key=f"lesson_coach_step_{lesson_run['id']}"):
+                        updated = dict(lesson_progress)
+                        step_id = active_step.get("id")
+                        if step_id == "inspect_current_state":
+                            updated["inspect_ran"] = True
+                        elif step_id == "classify_cleanup_scope":
+                            updated["classify_ran"] = True
+                        elif step_id == "generate_remediation_scripts":
+                            updated["scripts_generated"] = True
+                        elif step_id == "recheck_target_nodes":
+                            updated["recheck_ran"] = True
+                        elif step_id == "confirm_baseline":
+                            updated["baseline_confirmed"] = lesson_run.get("baseline_ready", False)
+                        append_coach_audit(
+                            st.session_state,
+                            lesson_run["id"],
+                            step_id,
+                            target_scope or "Cluster",
+                            target_nodes,
+                            "coach_step",
+                            active_step.get("coach_action", ""),
+                            active_step.get("verification", ""),
+                            state_changed=step_id in {"generate_remediation_scripts"},
+                            requires_student_action=active_step.get("student_must_do", False),
                         )
-                        st.write(f"Check / action: {entry.get('command_or_check', '')}")
-                        st.write(f"Result: {entry.get('result_summary', '')}")
-                        st.write(
-                            "State changed: "
-                            + ("yes" if entry.get("state_changed") else "no")
+                        _persist_lesson_progress(updated)
+                elif active_step and active_step.get("status") == "completed" and current_step_index < len(lesson_steps) - 1:
+                    if action_col2.button("Continue to next step", key=f"lesson_continue_{lesson_run['id']}"):
+                        updated = dict(lesson_progress)
+                        updated["current_step"] = current_step_index + 1
+                        append_coach_audit(
+                            st.session_state,
+                            lesson_run["id"],
+                            active_step.get("id", "continue"),
+                            target_scope or "Cluster",
+                            target_nodes,
+                            "continue",
+                            "advance lesson pointer",
+                            f"Moved to step {current_step_index + 2}.",
+                            state_changed=False,
+                            requires_student_action=False,
                         )
-                        st.write(
-                            "Student action required: "
-                            + ("yes" if entry.get("requires_student_action") else "no")
-                        )
-            else:
-                st.caption("No coach actions recorded yet.")
+                        _persist_lesson_progress(updated)
 
-    with student_col:
-        with st.container(border=True):
-            st.markdown("### Student Workspace")
-            st.write(
-                "This is the student working area. Review the generated commands or scripts, run them on the correct node or cluster shell, then return here to trigger verification."
-            )
-            if active_step:
-                status = active_step.get("status", "not_started")
-                st.markdown(
-                    f"**Active step:** {active_step.get('title', '')}  \n"
-                    f"{step_status_icon(status)} {step_status_badge(status)}"
-                )
-                observed = active_step.get("observed", "")
-                if observed:
-                    st.caption(f"Observed right now: {observed}")
-                st.caption(f"Scope: {target_scope or '(unknown)'}")
-                st.caption("Targets: " + (", ".join(target_nodes) if target_nodes else "(none)"))
-                run_on = active_step.get("run_on", "")
-                if run_on:
-                    st.caption(f"Run on: {run_on}")
-
-                scripts = lesson_run.get("remediation_scripts", {})
-                current_remediation_target = lesson_run.get("current_remediation_target", "")
-                completed_target_nodes = lesson_run.get("completed_target_nodes", [])
-                should_show_scripts = (
-                    bool(scripts)
-                    and (
-                        active_step.get("id") == "generate_remediation_scripts"
-                        or (
-                            active_step.get("id") in {"student_run_remediation", "recheck_target_nodes", "confirm_baseline"}
-                            and not lesson_run.get("baseline_ready")
-                        )
-                    )
-                )
-                if should_show_scripts:
-                    st.markdown("**Generated remediation scripts**")
-                    st.caption(
-                        "These scripts are generated for review in the lesson screen only. "
-                        "cka-coach is not writing them to disk automatically."
-                    )
-                    ordered_nodes = list(scripts.keys())
-                    if current_remediation_target and current_remediation_target in ordered_nodes:
-                        ordered_nodes = [current_remediation_target] + [
-                            node for node in ordered_nodes if node != current_remediation_target
-                        ]
-                    if current_remediation_target:
-                        st.info(
-                            f"Run this next: `cleanup-cni-residuals-{current_remediation_target}.sh` on node `{current_remediation_target}`."
-                        )
-                    if completed_target_nodes:
-                        st.caption(
-                            "Completed target nodes: " + ", ".join(completed_target_nodes)
-                        )
-                    if len(ordered_nodes) > 1:
-                        st.markdown("**Run these next**")
-                        for idx, node_name in enumerate(ordered_nodes, start=1):
-                            st.write(f"{idx}. Run `cleanup-cni-residuals-{node_name}.sh` on node `{node_name}`")
-                    for node_name in ordered_nodes:
-                        script = scripts[node_name]
-                        st.markdown(f"**{script.get('filename', node_name)}**")
-                        st.caption(script.get("summary", ""))
-                        st.caption(f"Target node: {node_name} | sudo required: {script.get('sudo_required', 'yes')}")
-                        st.code(script.get("content", ""), language="bash")
-                    if active_step.get("id") == "confirm_baseline" and not lesson_run.get("baseline_ready"):
-                        st.warning(
-                            "The baseline is still blocked. The generated remediation scripts remain visible here because at least one target node still needs cleanup."
-                        )
+                st.markdown("**Coach audit trail**")
+                if lesson_audit:
+                    for entry in lesson_audit[:6]:
+                        with st.expander(
+                            f"{entry.get('timestamp', '')} — {entry.get('step_id', '')} — {entry.get('action_type', '')}",
+                            expanded=False,
+                        ):
+                            st.write(f"Scope: {entry.get('node_scope', '')}")
+                            st.write(
+                                "Targets: "
+                                + (", ".join(entry.get("target_nodes", [])) or "(none)")
+                            )
+                            st.write(f"Check / action: {entry.get('command_or_check', '')}")
+                            st.write(f"Result: {entry.get('result_summary', '')}")
+                            st.write(
+                                "State changed: "
+                                + ("yes" if entry.get("state_changed") else "no")
+                            )
+                            st.write(
+                                "Student action required: "
+                                + ("yes" if entry.get("requires_student_action") else "no")
+                            )
                 else:
-                    commands = active_step.get("commands", [])
-                    if commands:
-                        st.markdown("**Run these commands**")
-                        st.code("\n".join(commands), language="bash")
-                    else:
-                        st.info("This step does not require a student-run command right now.")
+                    st.caption("No coach actions recorded yet.")
 
-                st.markdown("**Interpret what you see**")
-                st.caption(active_step.get("verification", ""))
-
-                with st.form(
-                    key=f"lesson_note_form_{lesson_run['id']}",
-                    clear_on_submit=True,
-                ):
-                    note = st.text_area(
-                        "Student command notebook / paste what you ran",
-                        key=lesson_input_key,
-                        height=120,
-                        placeholder="Example:\nls /etc/cni/net.d/\nsudo mv /etc/cni/net.d/05-cilium.conflist /etc/cni/net.d/05-cilium.conflist.bak",
+        with student_col:
+            with st.container(border=True):
+                st.markdown("### Student Workspace")
+                st.write(
+                    "This is the student working area. Review the generated commands or scripts, run them on the correct node or cluster shell, then return here to trigger verification."
+                )
+                if active_step:
+                    status = active_step.get("status", "not_started")
+                    st.markdown(
+                        f"**Active step:** {active_step.get('title', '')}  \n"
+                        f"{step_status_icon(status)} {step_status_badge(status)}"
                     )
-                    save_note = st.form_submit_button("Save note")
+                    observed = active_step.get("observed", "")
+                    if observed:
+                        st.caption(f"Observed right now: {observed}")
+                    st.caption(f"Scope: {target_scope or '(unknown)'}")
+                    st.caption("Targets: " + (", ".join(target_nodes) if target_nodes else "(none)"))
+                    run_on = active_step.get("run_on", "")
+                    if run_on:
+                        st.caption(f"Run on: {run_on}")
 
-                rerun_col, spacer_col = st.columns([1, 1])
-                if save_note:
-                    note = note.strip()
-                    if note:
-                        saved_notes = list(st.session_state.get(lesson_notes_key, []))
-                        saved_notes.insert(
-                            0,
-                            {
-                                "time": datetime.now().strftime("%H:%M:%S"),
-                                "text": note,
-                            },
+                    scripts = lesson_run.get("remediation_scripts", {})
+                    current_remediation_target = lesson_run.get("current_remediation_target", "")
+                    completed_target_nodes = lesson_run.get("completed_target_nodes", [])
+                    should_show_scripts = (
+                        bool(scripts)
+                        and (
+                            active_step.get("id") == "generate_remediation_scripts"
+                            or (
+                                active_step.get("id") in {"student_run_remediation", "recheck_target_nodes", "confirm_baseline"}
+                                and not lesson_run.get("baseline_ready")
+                            )
                         )
-                        st.session_state[lesson_notes_key] = saved_notes[:6]
-                        st.rerun()
-                if active_step.get("student_must_do") and rerun_col.button(
-                    "I ran this — re-check",
-                    key=f"lesson_student_rerun_{lesson_run['id']}",
-                ):
-                    updated = dict(lesson_progress)
-                    updated["student_confirmed"] = True
-                    current_target = lesson_run.get("current_remediation_target", "")
-                    cleanup_targets = list(lesson_run.get("cleanup_target_nodes", []))
-                    completed_targets = list(updated.get("completed_target_nodes", []))
-                    advanced_to_next_target = False
-                    if (
-                        active_step.get("id") == "student_run_remediation"
-                        and current_target
-                        and current_target not in completed_targets
+                    )
+                    if should_show_scripts:
+                        st.markdown("**Generated remediation scripts**")
+                        st.caption(
+                            "These scripts are generated for review in the lesson screen only. "
+                            "cka-coach is not writing them to disk automatically."
+                        )
+                        ordered_nodes = list(scripts.keys())
+                        if current_remediation_target and current_remediation_target in ordered_nodes:
+                            ordered_nodes = [current_remediation_target] + [
+                                node for node in ordered_nodes if node != current_remediation_target
+                            ]
+                        if current_remediation_target:
+                            st.info(
+                                f"Run this next: `cleanup-cni-residuals-{current_remediation_target}.sh` on node `{current_remediation_target}`."
+                            )
+                        if completed_target_nodes:
+                            st.caption(
+                                "Completed target nodes: " + ", ".join(completed_target_nodes)
+                            )
+                        if len(ordered_nodes) > 1:
+                            st.markdown("**Run these next**")
+                            for idx, node_name in enumerate(ordered_nodes, start=1):
+                                st.write(f"{idx}. Run `cleanup-cni-residuals-{node_name}.sh` on node `{node_name}`")
+                        for node_name in ordered_nodes:
+                            script = scripts[node_name]
+                            st.markdown(f"**{script.get('filename', node_name)}**")
+                            st.caption(script.get("summary", ""))
+                            st.caption(f"Target node: {node_name} | sudo required: {script.get('sudo_required', 'yes')}")
+                            st.code(script.get("content", ""), language="bash")
+                        if active_step.get("id") == "confirm_baseline" and not lesson_run.get("baseline_ready"):
+                            st.warning(
+                                "The baseline is still blocked. The generated remediation scripts remain visible here because at least one target node still needs cleanup."
+                            )
+                    else:
+                        commands = active_step.get("commands", [])
+                        if commands:
+                            st.markdown("**Run these commands**")
+                            st.code("\n".join(commands), language="bash")
+                        else:
+                            st.info("This step does not require a student-run command right now.")
+
+                    st.markdown("**Interpret what you see**")
+                    st.caption(active_step.get("verification", ""))
+
+                    with st.form(
+                        key=f"lesson_note_form_{lesson_run['id']}",
+                        clear_on_submit=True,
                     ):
-                        completed_targets.append(current_target)
-                        updated["completed_target_nodes"] = completed_targets
-                        remaining_targets = [
-                            node for node in cleanup_targets if node not in completed_targets
-                        ]
-                        if remaining_targets:
-                            updated["current_target_index"] = cleanup_targets.index(remaining_targets[0])
-                            updated["current_step"] = current_step_index
-                            advanced_to_next_target = True
+                        note = st.text_area(
+                            "Student command notebook / paste what you ran",
+                            key=lesson_input_key,
+                            height=120,
+                            placeholder="Example:\nls /etc/cni/net.d/\nsudo mv /etc/cni/net.d/05-cilium.conflist /etc/cni/net.d/05-cilium.conflist.bak",
+                        )
+                        save_note = st.form_submit_button("Save note")
+
+                    rerun_col, spacer_col = st.columns([1, 1])
+                    if save_note:
+                        note = note.strip()
+                        if note:
+                            saved_notes = list(st.session_state.get(lesson_notes_key, []))
+                            saved_notes.insert(
+                                0,
+                                {
+                                    "time": datetime.now().strftime("%H:%M:%S"),
+                                    "text": note,
+                                },
+                            )
+                            st.session_state[lesson_notes_key] = saved_notes[:6]
+                            st.rerun()
+                    if active_step.get("student_must_do") and rerun_col.button(
+                        "I ran this — re-check",
+                        key=f"lesson_student_rerun_{lesson_run['id']}",
+                    ):
+                        updated = dict(lesson_progress)
+                        updated["student_confirmed"] = True
+                        current_target = lesson_run.get("current_remediation_target", "")
+                        cleanup_targets = list(lesson_run.get("cleanup_target_nodes", []))
+                        completed_targets = list(updated.get("completed_target_nodes", []))
+                        advanced_to_next_target = False
+                        if (
+                            active_step.get("id") == "student_run_remediation"
+                            and current_target
+                            and current_target not in completed_targets
+                        ):
+                            completed_targets.append(current_target)
+                            updated["completed_target_nodes"] = completed_targets
+                            remaining_targets = [
+                                node for node in cleanup_targets if node not in completed_targets
+                            ]
+                            if remaining_targets:
+                                updated["current_target_index"] = cleanup_targets.index(remaining_targets[0])
+                                updated["current_step"] = current_step_index
+                                advanced_to_next_target = True
+                            elif current_step_index < len(lesson_steps) - 1:
+                                updated["current_step"] = current_step_index + 1
                         elif current_step_index < len(lesson_steps) - 1:
                             updated["current_step"] = current_step_index + 1
-                    elif current_step_index < len(lesson_steps) - 1:
-                        updated["current_step"] = current_step_index + 1
-                    append_coach_audit(
-                        st.session_state,
-                        lesson_run["id"],
-                        active_step.get("id", "student_step"),
-                        target_scope or "Node remediation",
-                        target_nodes,
-                        "student_confirmation",
-                        "student reported reviewed sudo step was run",
-                        (
-                            f"Marked {current_target} complete and advanced to the next target node."
-                            if advanced_to_next_target
-                            else "Moved lesson to coach re-check step."
-                        ),
-                        state_changed=False,
-                        requires_student_action=False,
+                        append_coach_audit(
+                            st.session_state,
+                            lesson_run["id"],
+                            active_step.get("id", "student_step"),
+                            target_scope or "Node remediation",
+                            target_nodes,
+                            "student_confirmation",
+                            "student reported reviewed sudo step was run",
+                            (
+                                f"Marked {current_target} complete and advanced to the next target node."
+                                if advanced_to_next_target
+                                else "Moved lesson to coach re-check step."
+                            ),
+                            state_changed=False,
+                            requires_student_action=False,
+                        )
+                        _persist_lesson_progress(updated)
+
+                    saved_notes = st.session_state.get(lesson_notes_key, [])
+                    if saved_notes:
+                        st.markdown("**Recent student notes**")
+                        for entry in saved_notes[:3]:
+                            st.caption(f"{entry.get('time', '')} — {entry.get('text', '')}")
+                else:
+                    st.info("Select a lesson above to start guided work.")
+
+                if lesson_run.get("baseline_ready"):
+                    st.success(
+                        "Known-good baseline verified. This lab is ready for the next networking lesson."
                     )
-                    _persist_lesson_progress(updated)
+                else:
+                    st.info(
+                        "The lesson remains paused until cka-coach can verify that residual networking state is gone or intentionally retained."
+                    )
 
-                saved_notes = st.session_state.get(lesson_notes_key, [])
-                if saved_notes:
-                    st.markdown("**Recent student notes**")
-                    for entry in saved_notes[:3]:
-                        st.caption(f"{entry.get('time', '')} — {entry.get('text', '')}")
-            else:
-                st.info("Select a lesson above to start guided work.")
-
-            if lesson_run.get("baseline_ready"):
-                st.success(
-                    "Known-good baseline verified. This lab is ready for the next networking lesson."
-                )
-            else:
-                st.info(
-                    "The lesson remains paused until cka-coach can verify that residual networking state is gone or intentionally retained."
-                )
-
-    st.markdown("### Per-node remediation status")
-    per_node_rows = []
-    for entry in lesson_run.get("per_node_status", []):
-        per_node_rows.append(
-            {
-                "Node": lesson_table_value(entry.get("node", "")),
-                "Scope": lesson_table_value(entry.get("scope", "")),
-                "Classification": lesson_table_value(entry.get("current_classification", "")),
-                "Cilium ifaces": lesson_table_value(entry.get("cilium_interfaces_present", "unknown")),
-                "Calico ifaces": lesson_table_value(entry.get("calico_interfaces_present", "unknown")),
-                "Calico iptables": lesson_table_value(entry.get("calico_iptables_present", "unknown")),
-                "Residue": lesson_table_value(", ".join(entry.get("residue_types", []))),
-                "Cleanup required": lesson_table_value(entry.get("cleanup_required", False)),
-                "Last verified": lesson_table_value(entry.get("last_verified_at", "")),
-            }
-        )
-    if per_node_rows:
-        st.table(per_node_rows)
+        st.markdown("### Per-node remediation status")
+        per_node_rows = []
+        for entry in lesson_run.get("per_node_status", []):
+            per_node_rows.append(
+                {
+                    "Node": lesson_table_value(entry.get("node", "")),
+                    "Scope": lesson_table_value(entry.get("scope", "")),
+                    "Classification": lesson_table_value(entry.get("current_classification", "")),
+                    "Cilium ifaces": lesson_table_value(entry.get("cilium_interfaces_present", "unknown")),
+                    "Calico ifaces": lesson_table_value(entry.get("calico_interfaces_present", "unknown")),
+                    "Calico iptables": lesson_table_value(entry.get("calico_iptables_present", "unknown")),
+                    "Residue": lesson_table_value(", ".join(entry.get("residue_types", []))),
+                    "Cleanup required": lesson_table_value(entry.get("cleanup_required", False)),
+                    "Last verified": lesson_table_value(entry.get("last_verified_at", "")),
+                }
+            )
+        if per_node_rows:
+            st.table(per_node_rows)
+        else:
+            st.caption("No node-specific remediation status is available.")
     else:
-        st.caption("No node-specific remediation status is available.")
+        st.info("No lesson state is available yet.")
 
 # --------------------------
 # Layer Detail
