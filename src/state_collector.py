@@ -1658,6 +1658,7 @@ def collect_state(
 
         # Pod-level view for L8 application_pods
         "pods": _safe_kubectl("kubectl get pods -A -o wide"),
+        "pods_json": _safe_kubectl("kubectl get pods -A -o json"),
 
         # Event / object-level clues for L7 and L5
         "events": _safe_kubectl("kubectl get events -A --sort-by=.lastTimestamp"),

@@ -14,6 +14,100 @@ import command_boundaries
 
 
 class TestCniDetection(unittest.TestCase):
+    def test_build_networking_panel_promotes_healthy_calico_visibility(self):
+        state = {
+            "runtime": {
+                "pods_json": json.dumps(
+                    {
+                        "items": [
+                            {
+                                "metadata": {"name": "calico-node-abc", "namespace": "kube-system"},
+                                "spec": {"containers": [{"image": "docker.io/calico/node:v3.27.0"}]},
+                                "status": {"containerStatuses": [{"ready": True}]},
+                            },
+                            {
+                                "metadata": {"name": "calico-kube-controllers-xyz", "namespace": "kube-system"},
+                                "spec": {"containers": [{"image": "docker.io/calico/kube-controllers:v3.27.0"}]},
+                                "status": {"containerStatuses": [{"ready": True}]},
+                            },
+                            {
+                                "metadata": {"name": "goldmane-123", "namespace": "calico-system"},
+                                "spec": {"containers": [{"image": "docker.io/calico/goldmane:v3.27.0"}]},
+                                "status": {"containerStatuses": [{"ready": True}]},
+                            },
+                            {
+                                "metadata": {"name": "whisker-123", "namespace": "calico-system"},
+                                "spec": {"containers": [{"image": "docker.io/calico/whisker:v3.27.0"}]},
+                                "status": {"containerStatuses": [{"ready": True}]},
+                            },
+                        ]
+                    }
+                ),
+                "nodes": (
+                    "NAME STATUS ROLES AGE VERSION INTERNAL-IP EXTERNAL-IP OS-IMAGE KERNEL-VERSION CONTAINER-RUNTIME\n"
+                    "cp Ready control-plane 58d v1.33.1 10.2.0.2 <none> Ubuntu 24.04 6.17.0 containerd://2.2.1\n"
+                    "worker1 Ready <none> 58d v1.33.1 10.2.0.3 <none> Ubuntu 24.04 6.17.0 containerd://2.2.1\n"
+                ),
+            },
+            "summary": {"versions": {"cni": "calico"}},
+            "health": {"cni_ok": "healthy"},
+            "evidence": {
+                "cni": {
+                    "confidence": "high",
+                    "capabilities": {
+                        "network_policy": True,
+                        "summary": "policy-capable dataplane likely",
+                    },
+                    "policy_presence": {"status": "present", "count": 2, "namespaces": ["default"]},
+                    "cluster_level": {"cni": "calico"},
+                    "node_level": {"cni": "calico", "selected_file": "10-calico.conflist"},
+                    "cluster_footprint": {
+                        "daemonsets": [{"name": "calico-node", "ready": "2", "desired": "2"}],
+                    },
+                    "cluster_platform_signals": {"signals": ["tigerastatus present", "calico ippool present"]},
+                    "calico_runtime": {"status": "established", "established_peers": 1},
+                    "classification": {"state": "healthy_calico", "notes": []},
+                    "version": {"value": "v3.27.0", "source": "kube_system_pod_image_tag"},
+                    "config_spec_version": {"value": "0.3.1", "file": "10-calico.conflist"},
+                }
+            },
+        }
+
+        panel = dashboard_presenters.build_networking_panel(state)
+
+        self.assertEqual(panel["overview"]["CNI"], "Calico")
+        self.assertEqual(panel["overview"]["Confidence"], "High")
+        self.assertEqual(panel["overview"]["Status"], "Working")
+        self.assertEqual(panel["overview"]["Observability"], "Goldmane + Whisker available")
+        self.assertIn("Calico is the active CNI", panel["interpretation"])
+
+    def test_build_networking_panel_does_not_guess_versions(self):
+        state = {
+            "runtime": {"pods_json": "", "nodes": ""},
+            "summary": {"versions": {"cni": "unknown"}},
+            "health": {"cni_ok": "unknown"},
+            "evidence": {
+                "cni": {
+                    "confidence": "low",
+                    "capabilities": {"network_policy": None},
+                    "policy_presence": {"status": "unknown", "count": 0, "namespaces": []},
+                    "cluster_level": {"cni": "unknown"},
+                    "node_level": {"cni": "unknown"},
+                    "cluster_footprint": {"daemonsets": []},
+                    "cluster_platform_signals": {"signals": []},
+                    "calico_runtime": {"status": "unknown"},
+                    "classification": {"state": "unknown", "notes": []},
+                    "version": {"value": "unknown", "source": "unknown"},
+                    "config_spec_version": {"value": "unknown"},
+                }
+            },
+        }
+
+        panel = dashboard_presenters.build_networking_panel(state)
+
+        self.assertEqual(panel["versions"][0]["Observed version"], "not directly observed")
+        self.assertEqual(panel["overview"]["CNI"], "Unknown")
+
     def test_parse_calico_bird_protocols_established(self):
         output = (
             'Defaulted container "calico-node" out of: calico-node, install-cni (init)\n'

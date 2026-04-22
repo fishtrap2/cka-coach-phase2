@@ -8,7 +8,12 @@ from datetime import datetime
 sys.path.append(os.path.join(os.path.dirname(__file__), "..", "src"))
 
 from state_collector import collect_state
-from dashboard_presenters import cni_config_spec_display, cni_status_label, cni_summary_text
+from dashboard_presenters import (
+    build_networking_panel,
+    cni_config_spec_display,
+    cni_status_label,
+    cni_summary_text,
+)
 from agent import ask_llm
 from command_boundaries import format_boundary_commands_html, format_boundary_commands_text
 from els_model import ELS_LAYERS
@@ -1042,6 +1047,67 @@ st.warning(
 st.warning(
     "KEY: 🟢 = healthy; 🔴 = degraded/unhealthy; 🟡 = unknown / visibility-limited (NEW default for Phase 1 container mode)"
 )
+
+# --------------------------
+# Networking Panel
+# --------------------------
+st.divider()
+st.markdown("## Networking Panel")
+st.caption(
+    "Current networking view: identity, health, policy, observability, component presence, and directly observed versions."
+)
+
+networking_panel = build_networking_panel(state)
+
+with st.container(border=True):
+    overview = networking_panel.get("overview", {})
+    overview_cols = st.columns(6)
+    for column, (label, value) in zip(overview_cols, overview.items()):
+        with column:
+            st.markdown(f"**{label}**")
+            st.write(value)
+
+    info_col1, info_col2 = st.columns([1, 1], gap="large")
+    with info_col1:
+        st.markdown("**Policy + Observability**")
+        for label, value in networking_panel.get("policy_observability", {}).items():
+            st.write(f"{label}: {value}")
+
+    with info_col2:
+        st.markdown("**Current Interpretation**")
+        st.write(networking_panel.get("interpretation", "Networking state is not directly observed."))
+
+evidence_col1, evidence_col2 = st.columns([1, 1], gap="large")
+with evidence_col1:
+    with st.container(border=True):
+        st.markdown("### Cluster Evidence")
+        for line in networking_panel.get("cluster_evidence", []):
+            st.write(f"- {line}")
+
+with evidence_col2:
+    with st.container(border=True):
+        st.markdown("### Node Evidence")
+        for line in networking_panel.get("node_evidence", []):
+            st.write(f"- {line}")
+
+component_col, version_col = st.columns([1.1, 1], gap="large")
+with component_col:
+    with st.container(border=True):
+        st.markdown("### Current Networking Components")
+        component_rows = networking_panel.get("components", [])
+        if component_rows:
+            st.table(component_rows)
+        else:
+            st.caption("No networking components were directly observed.")
+
+with version_col:
+    with st.container(border=True):
+        st.markdown("### Observed Versions")
+        version_rows = networking_panel.get("versions", [])
+        if version_rows:
+            st.table(version_rows)
+        else:
+            st.caption("No current networking component versions were directly observed.")
 
 # --------------------------
 # Active Lesson / Coaching Console
