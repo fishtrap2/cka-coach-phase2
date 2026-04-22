@@ -284,6 +284,27 @@ def _parse_application_pods(pods_json_text: str) -> List[Dict[str, Any]]:
     return pods
 
 
+def _parse_service_records(services_json_text: str) -> List[Dict[str, Any]]:
+    data = _parse_json_text(services_json_text)
+    items = data.get("items", []) if isinstance(data, dict) else []
+    services = []
+    for item in items:
+        metadata = item.get("metadata", {}) or {}
+        spec = item.get("spec", {}) or {}
+        cluster_ip = str(spec.get("clusterIP", "")).strip()
+        if not cluster_ip or cluster_ip in {"None", "null"}:
+            continue
+        services.append(
+            {
+                "namespace": metadata.get("namespace", ""),
+                "name": metadata.get("name", ""),
+                "cluster_ip": cluster_ip,
+                "type": spec.get("type", "ClusterIP"),
+            }
+        )
+    return services
+
+
 def _detect_local_underlay_interface(network_text: str) -> str:
     candidate = ""
     for line in network_text.splitlines():
@@ -619,6 +640,7 @@ def build_network_visual_model(state: Dict) -> Dict[str, Any]:
 
     nodes = _parse_node_records(runtime.get("nodes_json", ""))
     app_pods = _parse_application_pods(runtime.get("pods_json", ""))
+    services = _parse_service_records(runtime.get("services_json", ""))
     local_hostname = runtime.get("hostname", "").strip()
     local_underlay_nic = _detect_local_underlay_interface(runtime.get("network", ""))
     local_ifaces = _local_interface_groups(runtime.get("network", ""))
@@ -675,6 +697,22 @@ def build_network_visual_model(state: Dict) -> Dict[str, Any]:
     if components.get("whisker", {}).get("present"):
         policy_observability.append("Whisker")
 
+    preferred_services = [
+        service
+        for service in services
+        if service["namespace"] not in {"kube-system", "calico-system", "tigera-operator"}
+    ]
+    if not preferred_services:
+        preferred_services = [
+            service
+            for service in services
+            if service["namespace"] in {"default", "kube-system"}
+        ]
+    preferred_services = sorted(
+        preferred_services,
+        key=lambda service: (service["namespace"] != "default", service["namespace"], service["name"]),
+    )[:4]
+
     for node in ordered_nodes:
         node["pods"] = sorted(node.get("pods", []), key=lambda pod: (pod["namespace"], pod["name"]))[:4]
         node["is_local_observed"] = local_hostname == node["name"]
@@ -722,6 +760,7 @@ def build_network_visual_model(state: Dict) -> Dict[str, Any]:
         "pod_cidrs": pod_cidrs,
         "control_plane_components": calico_control,
         "policy_observability": policy_observability,
+        "services": preferred_services,
         "mode": mode,
         "cluster_pod_network": cluster_pod_network,
         "assumptions": [
@@ -786,6 +825,15 @@ def render_network_visual_html(model: Dict[str, Any]) -> str:
     policy_bits = "".join(
         f"<span class='netviz-chip netviz-chip-side'>{_html_escape(item)}</span>" for item in policy_observability
     ) or "<span class='netviz-chip netviz-chip-side'>No policy / observability components directly observed</span>"
+    service_bits = "".join(
+        (
+            f"<div class='netviz-svc'>"
+            f"<div class='netviz-svc-name'>{_html_escape(service['namespace'])}/{_html_escape(service['name'])}</div>"
+            f"<div class='netviz-svc-ip'>{_html_escape(service['cluster_ip'])}</div>"
+            f"</div>"
+        )
+        for service in services
+    ) or "<div class='netviz-empty'>No ClusterIP services highlighted from current evidence.</div>"
     underlay_label = " ↔ ".join(_html_escape(ip) for ip in underlay_ips) or "node IPs not directly observed"
     pod_cidr_label = ", ".join(_html_escape(cidr) for cidr in pod_cidrs) or _html_escape(model.get("cluster_pod_network", "unknown"))
 
@@ -883,6 +931,88 @@ def render_network_visual_html(model: Dict[str, Any]) -> str:
         grid-template-columns: minmax(240px, 1fr) minmax(240px, 1fr) minmax(240px, 1fr);
         gap: 14px;
         align-items: start;
+      }}
+      .netviz-addressing {{
+        margin-top: 16px;
+        border: 1px solid #334155;
+        border-radius: 12px;
+        padding: 12px;
+        background: #141922;
+      }}
+      .netviz-addressing-title {{
+        font-size: 13px;
+        font-weight: 700;
+        color: #bfdbfe;
+        margin-bottom: 8px;
+      }}
+      .netviz-services-lane {{
+        border: 1px dashed #7c3aed;
+        border-radius: 10px;
+        padding: 10px;
+        margin-bottom: 12px;
+        background: #181327;
+      }}
+      .netviz-services-grid {{
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+        gap: 8px;
+        margin-top: 8px;
+      }}
+      .netviz-svc {{
+        border: 1px solid #6d28d9;
+        border-radius: 8px;
+        padding: 8px;
+        background: #1f1435;
+      }}
+      .netviz-svc-name {{
+        font-size: 12px;
+        color: #f5f3ff;
+      }}
+      .netviz-svc-ip {{
+        font-size: 12px;
+        color: #c4b5fd;
+      }}
+      .netviz-address-grid {{
+        display: grid;
+        grid-template-columns: minmax(240px, 1fr) minmax(240px, 1fr) minmax(240px, 1fr);
+        gap: 14px;
+        align-items: start;
+      }}
+      .netviz-address-node {{
+        border: 1px solid #334155;
+        border-radius: 12px;
+        padding: 12px;
+        background: #151a22;
+      }}
+      .netviz-address-plane {{
+        border: 1px solid #35506b;
+        border-radius: 12px;
+        padding: 12px;
+        background: #121924;
+      }}
+      .netviz-address-subtitle {{
+        font-size: 12px;
+        font-weight: 700;
+        color: #cbd5e1;
+        margin-bottom: 8px;
+      }}
+      .netviz-pod-lane {{
+        display: grid;
+        gap: 8px;
+      }}
+      .netviz-pod-mini {{
+        border-left: 3px solid #60a5fa;
+        background: #0f172a;
+        border-radius: 8px;
+        padding: 8px 9px;
+      }}
+      .netviz-pod-mini-name {{
+        font-size: 12px;
+        color: #f8fafc;
+      }}
+      .netviz-pod-mini-ip {{
+        font-size: 12px;
+        color: #93c5fd;
       }}
       .netviz-node {{
         border: 1px solid #334155;
@@ -1037,6 +1167,43 @@ def render_network_visual_html(model: Dict[str, Any]) -> str:
         <div>{right_node_html}</div>
       </div>
       {"<div class='netviz-extra-nodes'>" + extra_nodes_html + "</div>" if extra_nodes_html else ""}
+      <div class="netviz-addressing">
+        <div class="netviz-addressing-title">Addressing / services view</div>
+        <div class="netviz-services-lane">
+          <div class="netviz-label">Services / ClusterIPs</div>
+          <div class="netviz-services-grid">{service_bits}</div>
+        </div>
+        <div class="netviz-address-grid">
+          <div class="netviz-address-node">
+            <div class="netviz-address-subtitle">{_html_escape(nodes[0].get('name', 'cp') if nodes else 'node')}</div>
+            <div class="netviz-chip">node IP: {_html_escape(nodes[0].get('internal_ip', 'unknown') if nodes else 'unknown')}</div>
+            <div class="netviz-chip">pod CIDR: {_html_escape(nodes[0].get('pod_cidr', 'unknown') if nodes else 'unknown')}</div>
+            <div class="netviz-pod-lane">
+              {"".join(
+                f"<div class='netviz-pod-mini'><div class='netviz-pod-mini-name'>{_html_escape(pod['namespace'])}/{_html_escape(pod['name'])}</div><div class='netviz-pod-mini-ip'>{_html_escape(pod.get('pod_ip', 'pod IP unknown') or 'pod IP unknown')}</div></div>"
+                for pod in (nodes[0].get('pods', []) if nodes else [])
+              ) or "<div class='netviz-empty'>No highlighted workload pods.</div>"}
+            </div>
+          </div>
+          <div class="netviz-address-plane">
+            <div class="netviz-address-subtitle">Policy + observability plane</div>
+            <div class="netviz-chip netviz-chip-side">{_html_escape(headline.get('overlay', 'unknown'))}</div>
+            {"".join(f"<div class='netviz-chip netviz-chip-side'>{_html_escape(item)}</div>" for item in policy_observability) or "<div class='netviz-empty'>No policy or observability components highlighted.</div>"}
+            <div class="netviz-footnote">Policy intent and flow visibility sit over service and pod addressing, between the two nodes and their workloads.</div>
+          </div>
+          <div class="netviz-address-node">
+            <div class="netviz-address-subtitle">{_html_escape(nodes[1].get('name', 'worker1') if len(nodes) > 1 else 'node')}</div>
+            <div class="netviz-chip">node IP: {_html_escape(nodes[1].get('internal_ip', 'unknown') if len(nodes) > 1 else 'unknown')}</div>
+            <div class="netviz-chip">pod CIDR: {_html_escape(nodes[1].get('pod_cidr', 'unknown') if len(nodes) > 1 else 'unknown')}</div>
+            <div class="netviz-pod-lane">
+              {"".join(
+                f"<div class='netviz-pod-mini'><div class='netviz-pod-mini-name'>{_html_escape(pod['namespace'])}/{_html_escape(pod['name'])}</div><div class='netviz-pod-mini-ip'>{_html_escape(pod.get('pod_ip', 'pod IP unknown') or 'pod IP unknown')}</div></div>"
+                for pod in (nodes[1].get('pods', []) if len(nodes) > 1 else [])
+              ) or "<div class='netviz-empty'>No highlighted workload pods.</div>"}
+            </div>
+          </div>
+        </div>
+      </div>
       <div class="netviz-footnote">
         { _html_escape(model.get("assumptions", [""])[0]) }<br/>
         { _html_escape(model.get("assumptions", ["", ""])[1]) }
