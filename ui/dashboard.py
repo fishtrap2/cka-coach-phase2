@@ -267,6 +267,31 @@ def summarize_current_evidence(state: dict, key: str) -> str:
     return current
 
 
+def render_networking_kv_cards(
+    title: str,
+    items: dict,
+    columns: int,
+    value_as_markdown: bool = True,
+):
+    st.markdown(f"**{title}**")
+    entries = list(items.items())
+    for start in range(0, len(entries), columns):
+        row_items = entries[start : start + columns]
+        row_cols = st.columns(columns)
+        for idx, column in enumerate(row_cols):
+            with column:
+                if idx < len(row_items):
+                    label, value = row_items[idx]
+                    with st.container(border=True):
+                        st.caption(label)
+                        if value_as_markdown:
+                            st.markdown(f"**{value}**")
+                        else:
+                            st.write(value)
+                else:
+                    st.empty()
+
+
 def summarize(state: dict) -> dict:
     """
     Build the "Current" summary values shown in the ELS table.
@@ -1060,28 +1085,30 @@ st.caption(
 networking_panel = build_networking_panel(state)
 
 with st.container(border=True):
-    overview = networking_panel.get("overview", {})
-    overview_cols = st.columns(6)
-    for column, (label, value) in zip(overview_cols, overview.items()):
-        with column:
-            st.markdown(f"**{label}**")
-            st.write(value)
-
-    mode_cols = st.columns(4)
-    for column, (label, value) in zip(mode_cols, networking_panel.get("mode", {}).items()):
-        with column:
-            st.markdown(f"**{label}**")
-            st.write(value)
+    render_networking_kv_cards(
+        "Current Networking Summary",
+        networking_panel.get("overview", {}),
+        columns=3,
+    )
+    render_networking_kv_cards(
+        "Networking Mode / Transport",
+        networking_panel.get("mode", {}),
+        columns=4,
+    )
 
     info_col1, info_col2 = st.columns([1, 1], gap="large")
     with info_col1:
-        st.markdown("**Policy + Observability**")
-        for label, value in networking_panel.get("policy_observability", {}).items():
-            st.write(f"{label}: {value}")
+        render_networking_kv_cards(
+            "Policy + Observability",
+            networking_panel.get("policy_observability", {}),
+            columns=1,
+            value_as_markdown=False,
+        )
 
     with info_col2:
-        st.markdown("**Current Interpretation**")
-        st.write(networking_panel.get("interpretation", "Networking state is not directly observed."))
+        with st.container(border=True):
+            st.caption("Current Interpretation")
+            st.write(networking_panel.get("interpretation", "Networking state is not directly observed."))
 
 evidence_col1, evidence_col2 = st.columns([1, 1], gap="large")
 with evidence_col1:
