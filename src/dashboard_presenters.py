@@ -202,6 +202,100 @@ def _bool_label(value: Any) -> str:
     return "unknown"
 
 
+def _normalize_encapsulation(value: str) -> str:
+    raw = (value or "").strip()
+    if not raw:
+        return "unknown"
+    lower = raw.lower()
+    if lower in {"none", "never"}:
+        return "None"
+    if "vxlan" in lower:
+        return "VXLAN CrossSubnet" if "cross" in lower else "VXLAN"
+    if "ipip" in lower:
+        return "IPIP CrossSubnet" if "cross" in lower else "IPIP"
+    return raw
+
+
+def _networking_mode_summary(state: Dict) -> Dict[str, str]:
+    runtime = state.get("runtime", {})
+    cni_name = state.get("summary", {}).get("versions", {}).get("cni", "unknown")
+    calico_runtime = state.get("evidence", {}).get("cni", {}).get("calico_runtime", {})
+
+    installation_json = _parse_json_text(runtime.get("calico_installations_json", ""))
+    ippools_json = _parse_json_text(runtime.get("calico_ippools_json", ""))
+
+    encapsulation = "unknown"
+    bgp = "unknown"
+    dataplane = "unknown"
+    cross_subnet = "unknown"
+
+    installation_items = installation_json.get("items", []) if isinstance(installation_json, dict) else []
+    ippool_items = ippools_json.get("items", []) if isinstance(ippools_json, dict) else []
+
+    installation = installation_items[0] if installation_items else {}
+    install_spec = installation.get("spec", {}) if isinstance(installation, dict) else {}
+    calico_network = install_spec.get("calicoNetwork", {}) if isinstance(install_spec, dict) else {}
+    install_ip_pools = calico_network.get("ipPools", []) if isinstance(calico_network, dict) else []
+
+    install_encaps = []
+    for pool in install_ip_pools:
+        if isinstance(pool, dict) and pool.get("encapsulation"):
+            install_encaps.append(_normalize_encapsulation(str(pool.get("encapsulation"))))
+    if install_encaps:
+        unique = sorted(set(install_encaps))
+        encapsulation = unique[0] if len(unique) == 1 else "mixed mode evidence"
+        cross_subnet = "Enabled" if any("CrossSubnet" in value for value in unique) else "Disabled"
+
+    bgp_value = calico_network.get("bgp") if isinstance(calico_network, dict) else None
+    if isinstance(bgp_value, str) and bgp_value.strip():
+        bgp = "Disabled" if bgp_value.strip().lower() == "disabled" else "Enabled"
+    elif cni_name == "calico" and calico_runtime.get("status") == "established":
+        bgp = "Enabled"
+
+    dataplane_value = (
+        calico_network.get("linuxDataplane")
+        if isinstance(calico_network, dict) and calico_network.get("linuxDataplane")
+        else install_spec.get("linuxDataplane")
+    )
+    if isinstance(dataplane_value, str) and dataplane_value.strip():
+        lower = dataplane_value.strip().lower()
+        dataplane = "eBPF" if lower in {"bpf", "ebpf"} else dataplane_value.strip().lower()
+
+    if encapsulation == "unknown" and ippool_items:
+        vxlan_modes = sorted(
+            {
+                str((item.get("spec", {}) or {}).get("vxlanMode", "")).strip()
+                for item in ippool_items
+                if str((item.get("spec", {}) or {}).get("vxlanMode", "")).strip()
+            }
+        )
+        ipip_modes = sorted(
+            {
+                str((item.get("spec", {}) or {}).get("ipipMode", "")).strip()
+                for item in ippool_items
+                if str((item.get("spec", {}) or {}).get("ipipMode", "")).strip()
+            }
+        )
+        if any(mode.lower() != "never" for mode in vxlan_modes):
+            active = [mode for mode in vxlan_modes if mode.lower() != "never"]
+            encapsulation = _normalize_encapsulation(f"vxlan {active[0]}") if len(active) == 1 else "mixed mode evidence"
+            cross_subnet = "Enabled" if any("cross" in mode.lower() for mode in active) else "Disabled"
+        elif any(mode.lower() != "never" for mode in ipip_modes):
+            active = [mode for mode in ipip_modes if mode.lower() != "never"]
+            encapsulation = _normalize_encapsulation(f"ipip {active[0]}") if len(active) == 1 else "mixed mode evidence"
+            cross_subnet = "Enabled" if any("cross" in mode.lower() for mode in active) else "Disabled"
+        elif vxlan_modes or ipip_modes:
+            encapsulation = "None"
+            cross_subnet = "Disabled"
+
+    return {
+        "Encapsulation": encapsulation,
+        "BGP": bgp,
+        "Dataplane": dataplane,
+        "Cross-subnet mode": cross_subnet,
+    }
+
+
 def build_networking_panel(state: Dict) -> Dict[str, Any]:
     runtime = state.get("runtime", {})
     summary_versions = state.get("summary", {}).get("versions", {})
@@ -373,6 +467,7 @@ def build_networking_panel(state: Dict) -> Dict[str, Any]:
 
     return {
         "overview": overview,
+        "mode": _networking_mode_summary(state),
         "cluster_evidence": cluster_evidence[:4],
         "node_evidence": node_evidence[:4],
         "components": component_rows,

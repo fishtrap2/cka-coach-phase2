@@ -1697,7 +1697,9 @@ def collect_state(
         # operator-managed Calico/Tigera signals
         "tigera_status": _safe_kubectl("kubectl get tigerastatus"),
         "calico_installations": _safe_kubectl("kubectl get installation.operator.tigera.io -A"),
+        "calico_installations_json": _safe_kubectl("kubectl get installation.operator.tigera.io -A -o json"),
         "calico_ippools": _safe_kubectl("kubectl get ippools.crd.projectcalico.org -A"),
+        "calico_ippools_json": _safe_kubectl("kubectl get ippools.crd.projectcalico.org -A -o json"),
 
         # detailed kube-system pod data used for direct image-tag evidence
         "kube_system_pods_json": _safe_kubectl("kubectl get pods -n kube-system -o json"),

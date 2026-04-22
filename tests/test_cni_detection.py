@@ -43,6 +43,35 @@ class TestCniDetection(unittest.TestCase):
                         ]
                     }
                 ),
+                "calico_installations_json": json.dumps(
+                    {
+                        "items": [
+                            {
+                                "spec": {
+                                    "calicoNetwork": {
+                                        "bgp": "Disabled",
+                                        "ipPools": [
+                                            {"encapsulation": "VXLANCrossSubnet"}
+                                        ],
+                                        "linuxDataplane": "Iptables",
+                                    }
+                                }
+                            }
+                        ]
+                    }
+                ),
+                "calico_ippools_json": json.dumps(
+                    {
+                        "items": [
+                            {
+                                "spec": {
+                                    "vxlanMode": "CrossSubnet",
+                                    "ipipMode": "Never",
+                                }
+                            }
+                        ]
+                    }
+                ),
                 "nodes": (
                     "NAME STATUS ROLES AGE VERSION INTERNAL-IP EXTERNAL-IP OS-IMAGE KERNEL-VERSION CONTAINER-RUNTIME\n"
                     "cp Ready control-plane 58d v1.33.1 10.2.0.2 <none> Ubuntu 24.04 6.17.0 containerd://2.2.1\n"
@@ -79,11 +108,15 @@ class TestCniDetection(unittest.TestCase):
         self.assertEqual(panel["overview"]["Confidence"], "High")
         self.assertEqual(panel["overview"]["Status"], "Working")
         self.assertEqual(panel["overview"]["Observability"], "Goldmane + Whisker available")
+        self.assertEqual(panel["mode"]["Encapsulation"], "VXLAN CrossSubnet")
+        self.assertEqual(panel["mode"]["BGP"], "Disabled")
+        self.assertEqual(panel["mode"]["Dataplane"], "iptables")
+        self.assertEqual(panel["mode"]["Cross-subnet mode"], "Enabled")
         self.assertIn("Calico is the active CNI", panel["interpretation"])
 
     def test_build_networking_panel_does_not_guess_versions(self):
         state = {
-            "runtime": {"pods_json": "", "nodes": ""},
+            "runtime": {"pods_json": "", "nodes": "", "calico_installations_json": "", "calico_ippools_json": ""},
             "summary": {"versions": {"cni": "unknown"}},
             "health": {"cni_ok": "unknown"},
             "evidence": {
@@ -107,6 +140,8 @@ class TestCniDetection(unittest.TestCase):
 
         self.assertEqual(panel["versions"][0]["Observed version"], "not directly observed")
         self.assertEqual(panel["overview"]["CNI"], "Unknown")
+        self.assertEqual(panel["mode"]["Encapsulation"], "unknown")
+        self.assertEqual(panel["mode"]["BGP"], "unknown")
 
     def test_parse_calico_bird_protocols_established(self):
         output = (

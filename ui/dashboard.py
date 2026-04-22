@@ -1067,6 +1067,12 @@ with st.container(border=True):
             st.markdown(f"**{label}**")
             st.write(value)
 
+    mode_cols = st.columns(4)
+    for column, (label, value) in zip(mode_cols, networking_panel.get("mode", {}).items()):
+        with column:
+            st.markdown(f"**{label}**")
+            st.write(value)
+
     info_col1, info_col2 = st.columns([1, 1], gap="large")
     with info_col1:
         st.markdown("**Policy + Observability**")
