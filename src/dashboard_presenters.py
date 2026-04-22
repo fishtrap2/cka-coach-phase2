@@ -789,6 +789,10 @@ def render_network_visual_html(model: Dict[str, Any]) -> str:
     underlay_label = " ↔ ".join(_html_escape(ip) for ip in underlay_ips) or "node IPs not directly observed"
     pod_cidr_label = ", ".join(_html_escape(cidr) for cidr in pod_cidrs) or _html_escape(model.get("cluster_pod_network", "unknown"))
 
+    left_node_html = node_cards[0] if node_cards else ""
+    right_node_html = node_cards[1] if len(node_cards) > 1 else ""
+    extra_nodes_html = "".join(node_cards[2:]) if len(node_cards) > 2 else ""
+
     return f"""
     <style>
       .netviz-root {{
@@ -876,19 +880,17 @@ def render_network_visual_html(model: Dict[str, Any]) -> str:
       }}
       .netviz-main {{
         display: grid;
-        grid-template-columns: minmax(0, 0.95fr) minmax(320px, 0.9fr);
+        grid-template-columns: minmax(240px, 1fr) minmax(240px, 1fr) minmax(240px, 1fr);
         gap: 14px;
-      }}
-      .netviz-nodes {{
-        display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
-        gap: 12px;
+        align-items: start;
       }}
       .netviz-node {{
         border: 1px solid #334155;
         border-radius: 12px;
         background: #151a22;
         padding: 12px;
+        width: 100%;
+        box-sizing: border-box;
       }}
       .netviz-node-head {{
         display: flex;
@@ -976,6 +978,7 @@ def render_network_visual_html(model: Dict[str, Any]) -> str:
         border-radius: 12px;
         background: #121924;
         padding: 12px;
+        min-height: 100%;
       }}
       .netviz-sideplane-title {{
         font-size: 13px;
@@ -987,6 +990,12 @@ def render_network_visual_html(model: Dict[str, Any]) -> str:
         margin-top: 10px;
         font-size: 12px;
         color: #94a3b8;
+      }}
+      .netviz-extra-nodes {{
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+        gap: 12px;
+        margin-top: 14px;
       }}
     </style>
     <div class="netviz-root">
@@ -1019,15 +1028,15 @@ def render_network_visual_html(model: Dict[str, Any]) -> str:
         </div>
       </div>
       <div class="netviz-main">
-        <div class="netviz-nodes">
-          {"".join(node_cards)}
-        </div>
+        <div>{left_node_html}</div>
         <div class="netviz-sideplane">
           <div class="netviz-sideplane-title">Policy + observability plane</div>
           {policy_bits}
-          <div class="netviz-footnote">This side plane shows policy capability and flow visibility components without changing the main dataplane identity.</div>
+          <div class="netviz-footnote">This plane sits between nodes and pods to show where policy intent and flow visibility overlay the dataplane without changing CNI identity.</div>
         </div>
+        <div>{right_node_html}</div>
       </div>
+      {"<div class='netviz-extra-nodes'>" + extra_nodes_html + "</div>" if extra_nodes_html else ""}
       <div class="netviz-footnote">
         { _html_escape(model.get("assumptions", [""])[0]) }<br/>
         { _html_escape(model.get("assumptions", ["", ""])[1]) }
