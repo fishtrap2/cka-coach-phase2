@@ -876,12 +876,12 @@ def render_network_visual_html(model: Dict[str, Any]) -> str:
       }}
       .netviz-main {{
         display: grid;
-        grid-template-columns: minmax(0, 1fr) 290px;
+        grid-template-columns: minmax(0, 0.95fr) minmax(320px, 0.9fr);
         gap: 14px;
       }}
       .netviz-nodes {{
         display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+        grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
         gap: 12px;
       }}
       .netviz-node {{
