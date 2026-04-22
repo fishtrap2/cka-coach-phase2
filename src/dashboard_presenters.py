@@ -775,6 +775,7 @@ def render_network_visual_html(model: Dict[str, Any]) -> str:
     nodes = model.get("nodes", [])
     control_plane_components = model.get("control_plane_components", [])
     policy_observability = model.get("policy_observability", [])
+    services = model.get("services", [])
     underlay_ips = model.get("underlay_ips", [])
     pod_cidrs = model.get("pod_cidrs", [])
 
