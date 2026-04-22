@@ -280,8 +280,13 @@ def summarize(state: dict) -> dict:
     data_lines = pod_lines[1:] if len(pod_lines) > 1 else []
 
     total_pods = len(data_lines)
-    kube_system_pods = sum(1 for l in data_lines if l.startswith("kube-system "))
-    default_pods = sum(1 for l in data_lines if l.startswith("default "))
+    namespace_counts = {}
+    for line in data_lines:
+        parts = line.split()
+        if not parts:
+            continue
+        namespace = parts[0]
+        namespace_counts[namespace] = namespace_counts.get(namespace, 0) + 1
     pending_pods = sum(1 for l in data_lines if " Pending " in f" {l} ")
     crashloop_pods = sum(1 for l in data_lines if "CrashLoopBackOff" in l)
     operator_pods = []
@@ -297,6 +302,10 @@ def summarize(state: dict) -> dict:
     daemonset_count = len(daemonset_names)
     daemonset_preview = ", ".join(daemonset_names[:3]) if daemonset_names else "none directly observed"
     operator_preview = ", ".join(operator_pods[:3]) if operator_pods else "none directly observed"
+    namespace_summary = ", ".join(
+        f"{namespace} {count}"
+        for namespace, count in sorted(namespace_counts.items())
+    ) or "no namespaces observed"
 
     kubelet_ok = health.get("kubelet_ok", None)
     kubelet_transitional_note = health.get("kubelet_transitional_note", "")
@@ -349,7 +358,7 @@ def summarize(state: dict) -> dict:
     return {
         "L9": ("User workloads present", True),
         "L8": (
-            f"{total_pods} pods | default {default_pods} | kube-system {kube_system_pods}"
+            f"{total_pods} pods | {namespace_summary}"
             + (f" | Pending={pending_pods}" if pending_pods else "")
             + (f" | CrashLoop={crashloop_pods}" if crashloop_pods else ""),
             not (health.get("pods_pending", False) or health.get("pods_crashloop", False)),
