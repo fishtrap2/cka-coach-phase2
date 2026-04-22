@@ -83,10 +83,14 @@ def normalize_collected_state(collected_state: dict) -> dict:
     cni_filename_text = "\n".join(cni_filenames) if cni_filenames else "(none found)"
     matched_pods = cluster_level.get("matched_pods", [])
     matched_pod_text = "\n".join(matched_pods) if matched_pods else "(none found)"
+    matched_daemonsets = cluster_level.get("matched_daemonsets", [])
+    matched_daemonset_text = "\n".join(matched_daemonsets) if matched_daemonsets else "(none found)"
     cni_name = summary_versions.get("cni", versions.get("cni", "")) or "unknown"
     cni_health = health.get("cni_ok", "unknown")
     capabilities = cni_evidence.get("capabilities", {})
     cluster_footprint = cni_evidence.get("cluster_footprint", {})
+    cluster_platform_signals = cni_evidence.get("cluster_platform_signals", {})
+    platform_signals = cluster_platform_signals.get("signals", [])
     daemonset_text = json.dumps(cluster_footprint.get("daemonsets", []), indent=2)
     calico_runtime = cni_evidence.get("calico_runtime", {})
     classification = cni_evidence.get("classification", {})
@@ -114,6 +118,7 @@ def normalize_collected_state(collected_state: dict) -> dict:
         missing_or_unverified.append("Node-level CNI config content was not directly collected from the selected file.")
     if (
         cluster_footprint.get("daemonset_count", 0) == 0
+        and not platform_signals
         and "not directly observed" in cluster_footprint.get("summary", "")
     ):
         missing_or_unverified.append("CNI DaemonSet presence or readiness was not directly collected from cluster evidence.")
@@ -155,8 +160,12 @@ def normalize_collected_state(collected_state: dict) -> dict:
         f"selected pod: {cluster_level.get('selected_pod', '') or '(none)'}\n"
         "matched kube-system pods:\n"
         f"{matched_pod_text}\n"
+        "matched daemonsets:\n"
+        f"{matched_daemonset_text}\n"
         "current matching daemonsets:\n"
         f"{daemonset_text}\n\n"
+        "[platform signals]\n"
+        f"{json.dumps(platform_signals, indent=2)}\n\n"
         "[node-level evidence]\n"
         "primary node checks:\n"
         "ls /etc/cni/net.d/\n"

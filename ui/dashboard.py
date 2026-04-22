@@ -8,7 +8,7 @@ from datetime import datetime
 sys.path.append(os.path.join(os.path.dirname(__file__), "..", "src"))
 
 from state_collector import collect_state
-from dashboard_presenters import cni_config_spec_display
+from dashboard_presenters import cni_config_spec_display, cni_status_label, cni_summary_text
 from agent import ask_llm
 from command_boundaries import format_boundary_commands_html, format_boundary_commands_text
 from els_model import ELS_LAYERS
@@ -309,7 +309,6 @@ def summarize(state: dict) -> dict:
     runc_ver = versions.get("runc", "")
     api_ver = versions.get("api", "")
     cni_evidence = state.get("evidence", {}).get("cni", {})
-    capability_summary = cni_evidence.get("capabilities", {}).get("summary", "unknown")
     cluster_footprint = cni_evidence.get("cluster_footprint", {}).get("summary", "cluster footprint not directly observed")
     policy_status = cni_evidence.get("policy_presence", {}).get("status", "unknown")
     cni_confidence = cni_evidence.get("confidence", "unknown")
@@ -323,23 +322,7 @@ def summarize(state: dict) -> dict:
         "unknown": "unknown",
     }.get(policy_status, policy_status)
 
-    cni_summary_text = (
-        f"{cni_name or 'unknown'} | {cni_classification_state} | {cni_confidence} confidence | {cluster_footprint}"
-    )
-    if (
-        reconciliation == "single_source"
-        and node_level_cni not in {"", "unknown"}
-        and cluster_level_cni in {"", "unknown"}
-    ):
-        cni_summary_text = (
-            f"{cni_name or 'unknown'} | {cni_confidence} confidence | "
-            f"cluster missing, node config says {node_level_cni}"
-        )
-    elif reconciliation == "conflict":
-        cni_summary_text = (
-            f"{cni_name or 'unknown'} | {cni_classification_state} | "
-            f"cluster {cluster_level_cni or 'unknown'} vs node {node_level_cni or 'unknown'}"
-        )
+    cni_summary_line = cni_summary_text(state)
 
     if kubelet_ok is True:
         kubelet_text = (
@@ -384,7 +367,7 @@ def summarize(state: dict) -> dict:
         ),
         "L4.1": (kubelet_text, kubelet_ok is True),
         "L4.2": ("kube-proxy / service routing", True),
-        "L4.3": (cni_summary_text, True),
+        "L4.3": (cni_summary_line, True),
         "L3": (containerd_text, containerd_ok is True),
         "L2": (runc_ver or "runc version unknown", True),
         "L1": (f"kernel {kernel_ver or 'unknown'}", True),
@@ -500,6 +483,8 @@ def format_cni_detection_evidence(state: dict) -> str:
         f"operator present: {cluster_footprint.get('operator_present', False)}\n"
         f"daemonset count: {cluster_footprint.get('daemonset_count', 0)}\n"
         f"daemonsets: {json.dumps(cluster_footprint.get('daemonsets', []), indent=2)}\n\n"
+        "[platform signals]\n"
+        f"signals: {json.dumps(cluster_footprint.get('platform_signals', []), indent=2)}\n\n"
         "[direct evidence entry points]\n"
         "cluster: kubectl get pods -n kube-system\n"
         "cluster: kubectl get ds -n kube-system\n"
@@ -1486,11 +1471,12 @@ cni_partial_uninstall_warning = (
     and cni_cluster_level.get("cni", "unknown") in {"", "unknown"}
 )
 
-status_label = "Unknown / limited visibility"
-if selected_status is True or selected_status == "healthy":
-    status_label = "Healthy"
-elif selected_status is False or selected_status == "degraded":
-    status_label = "Degraded"
+status_label = cni_status_label(state).replace("-", " ").title() if selected_key == "L4.3" else "Unknown / limited visibility"
+if selected_key != "L4.3":
+    if selected_status is True or selected_status == "healthy":
+        status_label = "Healthy"
+    elif selected_status is False or selected_status == "degraded":
+        status_label = "Degraded"
 
 with st.container(border=True):
     st.markdown(f"### {layer_label(selected_layer)}")

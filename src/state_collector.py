@@ -175,6 +175,8 @@ def _empty_pod_cni_detection() -> Dict[str, Any]:
     return {
         "cni": "unknown",
         "matched_pods": [],
+        "matched_daemonsets": [],
+        "platform_signals": [],
         "selected_pod": "",
         "confidence": "low",
     }
@@ -447,6 +449,127 @@ def _detect_cni_from_pods(pods_text: str) -> Dict[str, Any]:
     return best_match
 
 
+def _detect_cni_from_daemonsets(daemonsets_text: str) -> Dict[str, Any]:
+    result = _empty_pod_cni_detection()
+    if not daemonsets_text or "kubectl not installed" in daemonsets_text.lower():
+        return result
+
+    recognized_patterns = [
+        ("cilium", ["cilium", "cilium-envoy"]),
+        ("calico", ["calico-node", "calico-typha"]),
+        ("flannel", ["flannel"]),
+        ("weave", ["weave"]),
+        ("canal", ["canal"]),
+    ]
+
+    lines = [line for line in daemonsets_text.splitlines() if line.strip()]
+    data_lines = lines[1:] if len(lines) > 1 else []
+    best_match = dict(result)
+    for cni_name, patterns in recognized_patterns:
+        matched = []
+        for line in data_lines:
+            parts = line.split()
+            if not parts:
+                continue
+            ds_name = parts[0]
+            if any(pattern in ds_name.lower() for pattern in patterns):
+                matched.append(ds_name)
+        if len(matched) > len(best_match["matched_daemonsets"]):
+            best_match = {
+                "cni": cni_name,
+                "matched_pods": [],
+                "matched_daemonsets": matched,
+                "platform_signals": [],
+                "selected_pod": "",
+                "confidence": "high",
+            }
+    return best_match
+
+
+def _detect_cni_from_platform_objects(
+    tigera_status_text: str,
+    installations_text: str,
+    ippools_text: str,
+) -> Dict[str, Any]:
+    result = _empty_pod_cni_detection()
+    signals = []
+
+    lower_tigera = tigera_status_text.lower()
+    if tigera_status_text.strip() and "no resources found" not in lower_tigera and "kubectl not installed" not in lower_tigera:
+        if "calico" in lower_tigera or "apiserver" in lower_tigera or "goldmane" in lower_tigera or "whisker" in lower_tigera:
+            signals.append("tigerastatus present")
+
+    lower_install = installations_text.lower()
+    if installations_text.strip() and "no resources found" not in lower_install and "kubectl not installed" not in lower_install:
+        signals.append("tigera installation present")
+
+    lower_ippool = ippools_text.lower()
+    if ippools_text.strip() and "no resources found" not in lower_ippool and "kubectl not installed" not in lower_ippool:
+        signals.append("calico ippool present")
+
+    if signals:
+        return {
+            "cni": "calico",
+            "matched_pods": [],
+            "matched_daemonsets": [],
+            "platform_signals": signals,
+            "selected_pod": "",
+            "confidence": "high",
+        }
+
+    return result
+
+
+def _detect_cni_from_cluster_state(runtime: Dict[str, str]) -> Dict[str, Any]:
+    pod_detection = _detect_cni_from_pods(runtime.get("pods", ""))
+    daemonset_detection = _detect_cni_from_daemonsets(runtime.get("daemonsets", ""))
+    platform_detection = _detect_cni_from_platform_objects(
+        runtime.get("tigera_status", ""),
+        runtime.get("calico_installations", ""),
+        runtime.get("calico_ippools", ""),
+    )
+
+    candidates = [d for d in [pod_detection, daemonset_detection, platform_detection] if d.get("cni", "unknown") != "unknown"]
+    if not candidates:
+        return _empty_pod_cni_detection()
+
+    merged: Dict[str, Dict[str, Any]] = {}
+    for detection in candidates:
+        cni_name = detection["cni"]
+        entry = merged.setdefault(
+            cni_name,
+            {
+                "cni": cni_name,
+                "matched_pods": [],
+                "matched_daemonsets": [],
+                "platform_signals": [],
+                "selected_pod": "",
+                "confidence": "medium",
+            },
+        )
+        entry["matched_pods"].extend(detection.get("matched_pods", []))
+        entry["matched_daemonsets"].extend(detection.get("matched_daemonsets", []))
+        entry["platform_signals"].extend(detection.get("platform_signals", []))
+        if not entry["selected_pod"] and detection.get("selected_pod"):
+            entry["selected_pod"] = detection["selected_pod"]
+        if detection.get("confidence") == "high":
+            entry["confidence"] = "high"
+
+    best = max(
+        merged.values(),
+        key=lambda item: (
+            len(set(item["matched_pods"])),
+            len(set(item["matched_daemonsets"])),
+            len(set(item["platform_signals"])),
+            1 if item.get("confidence") == "high" else 0,
+        ),
+    )
+    best["matched_pods"] = sorted(set(best["matched_pods"]))
+    best["matched_daemonsets"] = sorted(set(best["matched_daemonsets"]))
+    best["platform_signals"] = sorted(set(best["platform_signals"]))
+    return best
+
+
 def _source_support_score(detection: Dict[str, Any]) -> int:
     """
     Rank evidence sources for simple conflict resolution.
@@ -458,7 +581,7 @@ def _source_support_score(detection: Dict[str, Any]) -> int:
     if "matched_pods" in detection:
         return {"high": 20, "medium": 10, "low": 0}.get(confidence, 0) + len(
             detection.get("matched_pods", [])
-        )
+        ) + len(detection.get("matched_daemonsets", [])) * 3 + len(detection.get("platform_signals", [])) * 3
 
     return {"high": 20, "medium": 10, "low": 0}.get(confidence, 0) + len(
         detection.get("filenames", [])
@@ -492,9 +615,10 @@ def _reconcile_cni_detection(
         }
 
     if cluster_known and not node_known:
+        cluster_confidence = "high" if _source_support_score(cluster_level) >= 23 else "medium"
         return {
             "cni": cluster_cni,
-            "confidence": "medium",
+            "confidence": cluster_confidence,
             "reconciliation": "single_source",
         }
 
@@ -619,12 +743,15 @@ def _summarize_cni_cluster_footprint(
     Summarize a small auditable cluster-side footprint for the detected CNI.
     """
     matched_pods = cluster_level.get("matched_pods", [])
+    matched_daemonsets = cluster_level.get("matched_daemonsets", [])
+    platform_signals = cluster_level.get("platform_signals", [])
     operator_present = any("operator" in pod.lower() for pod in matched_pods)
 
     result = {
         "operator_present": operator_present,
         "daemonset_count": 0,
         "daemonsets": [],
+        "platform_signals": platform_signals,
         "summary": "cluster footprint not directly observed",
     }
 
@@ -634,6 +761,8 @@ def _summarize_cni_cluster_footprint(
     if not daemonsets_text.strip() or "kubectl not installed" in daemonsets_text.lower():
         if matched_pods:
             result["summary"] = "pods present; daemonset footprint not directly observed"
+        elif platform_signals:
+            result["summary"] = "platform signals present; daemonset footprint not directly observed"
         return result
 
     lines = [line for line in daemonsets_text.splitlines() if line.strip()]
@@ -644,7 +773,7 @@ def _summarize_cni_cluster_footprint(
         if len(parts) < 6:
             continue
         ds_name = parts[0]
-        if cni_name not in ds_name.lower():
+        if cni_name not in ds_name.lower() and ds_name not in matched_daemonsets:
             continue
         matching_daemonsets.append({
             "name": ds_name,
@@ -661,11 +790,15 @@ def _summarize_cni_cluster_footprint(
         summary_bits.append("operator present")
     if matching_daemonsets:
         summary_bits.append(f"daemonsets={len(matching_daemonsets)}")
+    if platform_signals:
+        summary_bits.append(f"platform_signals={len(platform_signals)}")
 
     if summary_bits:
         result["summary"] = ", ".join(summary_bits)
     elif matched_pods:
         result["summary"] = "pods present; no matching daemonsets observed"
+    elif platform_signals:
+        result["summary"] = "platform signals present; no matching daemonsets observed"
 
     return result
 
@@ -1057,6 +1190,7 @@ def _classify_cni_state(
     cluster_level = evidence.get("cluster_level", {})
     cluster_footprint = evidence.get("cluster_footprint", {})
     calico_runtime = evidence.get("calico_runtime", {})
+    platform_signals = cluster_footprint.get("platform_signals", [])
     migration_note = evidence.get("migration_note", "")
     node_cni = node_level.get("cni", "unknown")
     cluster_cni = cluster_level.get("cni", "unknown")
@@ -1087,7 +1221,7 @@ def _classify_cni_state(
         cni_text == "calico"
         and cluster_cni == "calico"
         and any(ds.get("name") == "calico-node" for ds in cluster_footprint.get("daemonsets", []))
-        and calico_runtime.get("status") == "established"
+        and (calico_runtime.get("status") == "established" or bool(platform_signals))
     )
     strong_cilium = (
         cni_text == "cilium"
@@ -1115,15 +1249,15 @@ def _classify_cni_state(
     elif stale_interfaces.get("detected"):
         state = "stale_interfaces"
         reason = "Current cluster state does not match leftover CNI-specific interfaces still present on nodes."
-    elif reconciliation in {"conflict", "single_source"}:
-        state = "mixed_or_transitional"
-        reason = migration_note or "Evidence suggests an in-progress migration or only partially verified CNI state."
     elif strong_calico:
         state = "healthy_calico"
         reason = "Calico daemonset/runtime evidence is present with no conflicting CNI signal."
     elif strong_cilium:
         state = "healthy_cilium"
         reason = "Cilium daemonset/operator evidence is present with no conflicting CNI signal."
+    elif reconciliation in {"conflict", "single_source"}:
+        state = "mixed_or_transitional"
+        reason = migration_note or "Evidence suggests an in-progress migration or only partially verified CNI state."
     elif cni_text in {"", "unknown"} and node_cni in {"", "unknown"} and cluster_cni in {"", "unknown"}:
         if nodes_ready is True and pods_running:
             state = "generic_cni"
@@ -1296,6 +1430,7 @@ def _health_flags(
     cni_reconciliation = cni_evidence.get("reconciliation", "unknown")
     cni_cluster_footprint = cni_evidence.get("cluster_footprint", {})
     calico_runtime = cni_evidence.get("calico_runtime", {})
+    platform_signals = cni_cluster_footprint.get("platform_signals", [])
     cni_node_level = cni_evidence.get("node_level", {})
     cni_cluster_level = cni_evidence.get("cluster_level", {})
     nodes_ready_now = _all_nodes_ready(runtime.get("nodes", ""))
@@ -1449,7 +1584,7 @@ def _health_flags(
     strong_live_cluster_cni_evidence = bool(
         expected_daemonsets
         and (observed_cni_daemonsets & expected_daemonsets)
-    ) or (cni_text == "calico" and calico_runtime.get("status") == "established")
+    ) or (cni_text == "calico" and calico_runtime.get("status") == "established") or bool(platform_signals)
 
     if cni_text in {"", "unknown"}:
         cni_ok = "unknown"
@@ -1458,6 +1593,8 @@ def _health_flags(
     elif cni_reconciliation == "conflict":
         cni_ok = "degraded"
     elif cni_text == "calico" and calico_runtime.get("status") == "established":
+        cni_ok = "healthy"
+    elif cni_reconciliation == "single_source" and strong_live_cluster_cni_evidence:
         cni_ok = "healthy"
     elif missing_expected_daemonset:
         cni_ok = "unknown"
@@ -1556,6 +1693,11 @@ def collect_state(
         # cluster daemonsets for CNI footprint summaries
         "daemonsets": _safe_kubectl("kubectl get daemonsets -n kube-system"),
 
+        # operator-managed Calico/Tigera signals
+        "tigera_status": _safe_kubectl("kubectl get tigerastatus"),
+        "calico_installations": _safe_kubectl("kubectl get installation.operator.tigera.io -A"),
+        "calico_ippools": _safe_kubectl("kubectl get ippools.crd.projectcalico.org -A"),
+
         # detailed kube-system pod data used for direct image-tag evidence
         "kube_system_pods_json": _safe_kubectl("kubectl get pods -n kube-system -o json"),
 
@@ -1575,7 +1717,7 @@ def collect_state(
     # These fields are slower-changing metadata that help place the cluster
     # in context and populate table version columns.
     node_cni_detection = _detect_cni(allow_host_evidence=allow_host_evidence)
-    cluster_cni_detection = _detect_cni_from_pods(runtime.get("pods", ""))
+    cluster_cni_detection = _detect_cni_from_cluster_state(runtime)
     combined_cni_detection = _reconcile_cni_detection(
         node_cni_detection,
         cluster_cni_detection,
@@ -1639,6 +1781,14 @@ def collect_state(
             "reconciliation": combined_cni_detection.get("reconciliation", "unknown"),
             "capabilities": capabilities,
             "cluster_footprint": cluster_footprint,
+            "cluster_platform_signals": {
+                "signals": cluster_cni_detection.get("platform_signals", []),
+                "summary": (
+                    f"platform signals={len(cluster_cni_detection.get('platform_signals', []))}"
+                    if cluster_cni_detection.get("platform_signals")
+                    else "no platform signals collected"
+                ),
+            },
             "calico_runtime": calico_runtime,
             "policy_presence": policy_presence,
             "version": cni_version,

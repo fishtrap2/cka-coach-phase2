@@ -457,6 +457,25 @@ class TestCniDetection(unittest.TestCase):
             ["calico-node-abcde", "calico-kube-controllers-12345"],
         )
 
+    def test_detect_cni_from_cluster_state_promotes_calico_from_daemonset_and_platform_objects(self):
+        runtime = {
+            "pods": "",
+            "daemonsets": (
+                "NAME DESIRED CURRENT READY UP-TO-DATE AVAILABLE NODE SELECTOR AGE\n"
+                "calico-node 2 2 2 2 2 kubernetes.io/os=linux 58d\n"
+            ),
+            "tigera_status": "NAME AVAILABLE PROGRESSING DEGRADED SINCE\ncalico True False False 1h\n",
+            "calico_installations": "NAMESPACE NAME\ndefault default\n",
+            "calico_ippools": "NAME CREATED AT\ndefault-ipv4-ippool 2026-04-22T00:00:00Z\n",
+        }
+
+        result = state_collector._detect_cni_from_cluster_state(runtime)
+
+        self.assertEqual(result["cni"], "calico")
+        self.assertEqual(result["confidence"], "high")
+        self.assertIn("calico-node", result["matched_daemonsets"])
+        self.assertIn("tigerastatus present", result["platform_signals"])
+
     def test_infer_cni_capabilities_for_calico(self):
         result = state_collector._infer_cni_capabilities("calico")
 
@@ -605,7 +624,13 @@ class TestCniDetection(unittest.TestCase):
         self.assertEqual(state["summary"]["versions"]["cni_version"], "v3.30.0")
         self.assertEqual(state["summary"]["versions"]["cni_config_spec_version"], "0.3.1")
         self.assertEqual(state["evidence"]["cni"]["node_level"], node_detection)
-        self.assertEqual(state["evidence"]["cni"]["cluster_level"], cluster_detection)
+        self.assertEqual(state["evidence"]["cni"]["cluster_level"]["cni"], cluster_detection["cni"])
+        self.assertEqual(state["evidence"]["cni"]["cluster_level"]["selected_pod"], cluster_detection["selected_pod"])
+        self.assertEqual(state["evidence"]["cni"]["cluster_level"]["confidence"], cluster_detection["confidence"])
+        self.assertEqual(
+            set(state["evidence"]["cni"]["cluster_level"]["matched_pods"]),
+            set(cluster_detection["matched_pods"]),
+        )
         self.assertEqual(state["evidence"]["cni"]["confidence"], "high")
         self.assertEqual(state["evidence"]["cni"]["reconciliation"], "agree")
         self.assertEqual(state["evidence"]["cni"]["capabilities"]["summary"], "policy-capable dataplane likely")
@@ -796,6 +821,72 @@ class TestCniDetection(unittest.TestCase):
         self.assertEqual(state["evidence"]["cni"]["reconciliation"], "single_source")
         self.assertEqual(state["health"]["cni_ok"], "healthy")
         self.assertEqual(state["evidence"]["cni"]["capabilities"]["network_policy"], True)
+
+    def test_collect_state_promotes_strong_cluster_only_calico_to_high_confidence_healthy(self):
+        node_detection = {
+            "cni": "unknown",
+            "filenames": [],
+            "selected_file": "",
+            "confidence": "low",
+        }
+
+        def fake_safe_kubectl(command: str) -> str:
+            if command == "kubectl get pods -A -o wide":
+                return ""
+            if command == "kubectl get daemonsets -n kube-system":
+                return (
+                    "NAME DESIRED CURRENT READY UP-TO-DATE AVAILABLE NODE SELECTOR AGE\n"
+                    "calico-node 2 2 2 2 2 kubernetes.io/os=linux 58d\n"
+                )
+            if command == "kubectl get tigerastatus":
+                return "NAME AVAILABLE PROGRESSING DEGRADED SINCE\ncalico True False False 1h\n"
+            if command == "kubectl get installation.operator.tigera.io -A":
+                return "NAMESPACE NAME\ndefault default\n"
+            if command == "kubectl get ippools.crd.projectcalico.org -A":
+                return "NAME CREATED AT\ndefault-ipv4-ippool 2026-04-22T00:00:00Z\n"
+            return ""
+
+        with patch.object(state_collector, "_safe_kubectl", side_effect=fake_safe_kubectl), patch.object(
+            state_collector, "_safe_systemctl", return_value=""
+        ), patch.object(state_collector, "_safe_crictl", return_value=""), patch.object(
+            state_collector, "_safe_ip", return_value=""
+        ), patch.object(
+            state_collector, "_run_command", return_value=""
+        ), patch.object(
+            state_collector, "_safe_kubectl_version_short", return_value=""
+        ), patch.object(
+            state_collector, "_safe_kubectl_version_json", return_value=""
+        ), patch.object(
+            state_collector, "_safe_uname", return_value=""
+        ), patch.object(
+            state_collector, "_safe_containerd_version", return_value=""
+        ), patch.object(
+            state_collector, "_safe_kubelet_version", return_value=""
+        ), patch.object(
+            state_collector, "_safe_runc_version", return_value=""
+        ), patch.object(
+            state_collector, "_detect_cni", return_value=node_detection
+        ), patch.object(
+            state_collector,
+            "_collect_calico_runtime_evidence",
+            return_value={
+                "status": "established",
+                "pod": "calico-node-abcde",
+                "bird_ready": True,
+                "established_peers": 1,
+                "protocol_lines": ["Mesh_10_2_0_3 BGP master up Established"],
+                "summary": "BGP peers established=1",
+                "source": "kubectl_exec_birdcl",
+                "raw_output": "BIRD ready",
+            },
+        ):
+            state = state_collector.collect_state()
+
+        self.assertEqual(state["summary"]["versions"]["cni"], "calico")
+        self.assertEqual(state["evidence"]["cni"]["confidence"], "high")
+        self.assertEqual(state["evidence"]["cni"]["reconciliation"], "single_source")
+        self.assertEqual(state["health"]["cni_ok"], "healthy")
+        self.assertEqual(state["evidence"]["cni"]["classification"]["state"], "healthy_calico")
 
     def test_collect_state_preserves_cilium_capability_behavior(self):
         node_detection = {
