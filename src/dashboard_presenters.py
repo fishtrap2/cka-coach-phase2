@@ -470,6 +470,12 @@ def build_networking_panel(state: Dict) -> Dict[str, Any]:
 
     components = _collect_networking_components(state)
     networking_namespaces = _observed_networking_namespaces(components)
+    parsed_nodes = _parse_node_records(runtime.get("nodes_json", ""))
+    ready_node_names = []
+    for line in runtime.get("nodes", "").splitlines()[1:]:
+        parts = line.split()
+        if len(parts) >= 2 and parts[1] == "Ready":
+            ready_node_names.append(parts[0])
     goldmane_present = components.get("goldmane", {}).get("present", False)
     whisker_present = components.get("whisker", {}).get("present", False)
     if goldmane_present and whisker_present:
@@ -508,13 +514,59 @@ def build_networking_panel(state: Dict) -> Dict[str, Any]:
         cluster_evidence.append("Current cluster-side networking evidence is limited.")
 
     node_evidence = []
+    direct_node_config_observed = node_level.get("cni", "unknown") not in {"", "unknown"}
     if node_level.get("cni", "unknown") not in {"", "unknown"}:
         config_detail = node_level.get("selected_file", "") or "recognized config"
         node_evidence.append(
             f"Node config points to {node_level.get('cni')} via {config_detail}."
         )
     else:
-        node_evidence.append("Host-level CNI config is not directly observed or not readable.")
+        node_evidence.append(
+            "Direct host-level CNI config is not readable here, so node evidence falls back to node readiness, node-local agents, and runtime state."
+        )
+
+    if ready_node_names:
+        if len(ready_node_names) == 1:
+            node_evidence.append(f"Ready node observed: {ready_node_names[0]}.")
+        else:
+            node_evidence.append("Ready nodes observed: " + ", ".join(ready_node_names[:4]) + ".")
+
+    node_agent_component = None
+    if cni_name == "calico":
+        node_agent_component = "calico-node"
+    elif cni_name == "cilium":
+        node_agent_component = "cilium"
+    if node_agent_component and components.get(node_agent_component, {}).get("present"):
+        pods_json = _parse_json_text(runtime.get("pods_json", ""))
+        items = pods_json.get("items", []) if isinstance(pods_json, dict) else []
+        agent_nodes = sorted(
+            {
+                ((item.get("spec", {}) or {}).get("nodeName", "")).strip()
+                for item in items
+                if node_agent_component in str((item.get("metadata", {}) or {}).get("name", "")).lower()
+                and ((item.get("status", {}) or {}).get("phase", "") == "Running")
+                and ((item.get("spec", {}) or {}).get("nodeName", "")).strip()
+            }
+        )
+        if agent_nodes:
+            node_evidence.append(
+                f"Node-local {node_agent_component} pods are running on {', '.join(agent_nodes[:4])}."
+            )
+
+    if health.get("kubelet_ok") is True:
+        observed_host = runtime.get("hostname", "").strip()
+        if observed_host:
+            node_evidence.append(
+                f"Host evidence shows kubelet active on {observed_host}, confirming the node agent is up."
+            )
+        else:
+            node_evidence.append("Host evidence shows kubelet active on the observed node.")
+
+    if health.get("containerd_ok") is True:
+        node_evidence.append(
+            "Host evidence shows containerd active on the observed node; this confirms runtime state rather than CNI identity."
+        )
+
     if config_spec_version.get("value", "unknown") not in {"", "unknown"}:
         node_evidence.append(
             f"CNI spec {config_spec_version.get('value')} observed from {config_spec_version.get('file', '(unknown file)')}."
@@ -531,6 +583,9 @@ def build_networking_panel(state: Dict) -> Dict[str, Any]:
         node_evidence.append("Node-level config does not match the current cluster-side CNI footprint.")
     elif not classification.get("notes") and health.get("cni_ok") == "healthy":
         node_evidence.append("No blocking local-node residue is currently highlighted by CNI classification.")
+
+    if not direct_node_config_observed and parsed_nodes and len(node_evidence) == 1:
+        node_evidence.append("Node-side networking evidence is currently limited to cluster-observed node state.")
 
     component_rows = []
     for key in [
