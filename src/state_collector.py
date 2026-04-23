@@ -1228,11 +1228,23 @@ def _classify_cni_state(
         and cluster_cni == "cilium"
         and any(ds.get("name") == "cilium" for ds in cluster_footprint.get("daemonsets", []))
     )
+    residual_previous_cni = (
+        cni_text in {"calico", "cilium"}
+        and cluster_cni == cni_text
+        and previous_detected_cni not in {"", "unknown", cni_text}
+        and (stale_interfaces.get("detected") or stale_taints.get("detected"))
+    )
     named_plugin_present = any(
         cni in {"calico", "cilium"} for cni in {cni_text, node_cni, cluster_cni}
     )
 
-    if node_cni not in {"", "unknown"} and cluster_cni not in {"", "unknown"} and node_cni != cluster_cni:
+    if residual_previous_cni and (strong_calico or strong_cilium):
+        state = "residual_node_dataplane_state"
+        reason = (
+            f"{cni_text.capitalize()} is active at cluster level, but leftover {previous_detected_cni} "
+            "node dataplane artifacts remain on the observed node."
+        )
+    elif node_cni not in {"", "unknown"} and cluster_cni not in {"", "unknown"} and node_cni != cluster_cni:
         state = "stale_node_config"
         reason = (
             f"Cluster evidence indicates {cluster_cni}, but node-level config still references {node_cni}."
@@ -1429,6 +1441,7 @@ def _health_flags(
     cni_evidence = (evidence or {}).get("cni", {})
     cni_reconciliation = cni_evidence.get("reconciliation", "unknown")
     cni_cluster_footprint = cni_evidence.get("cluster_footprint", {})
+    cni_classification = cni_evidence.get("classification", {})
     calico_runtime = cni_evidence.get("calico_runtime", {})
     platform_signals = cni_cluster_footprint.get("platform_signals", [])
     cni_node_level = cni_evidence.get("node_level", {})
@@ -1585,11 +1598,22 @@ def _health_flags(
         expected_daemonsets
         and (observed_cni_daemonsets & expected_daemonsets)
     ) or (cni_text == "calico" and calico_runtime.get("status") == "established") or bool(platform_signals)
+    residual_previous_cni = (
+        cni_text in {"calico", "cilium"}
+        and cni_cluster_level.get("cni", "unknown") == cni_text
+        and cni_classification.get("previous_detected_cni", "unknown") not in {"", "unknown", cni_text}
+        and (
+            cni_classification.get("stale_interfaces", {}).get("detected")
+            or cni_classification.get("stale_taint", {}).get("detected")
+        )
+    )
 
     if cni_text in {"", "unknown"}:
         cni_ok = "unknown"
     elif override_config_conflict and strong_live_cluster_cni_evidence:
         cni_ok = "unknown"
+    elif residual_previous_cni and strong_live_cluster_cni_evidence:
+        cni_ok = "healthy"
     elif cni_reconciliation == "conflict":
         cni_ok = "degraded"
     elif cni_text == "calico" and calico_runtime.get("status") == "established":

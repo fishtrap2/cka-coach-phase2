@@ -9,6 +9,7 @@ sys.path.append(os.path.join(os.path.dirname(__file__), "..", "src"))
 
 from state_collector import collect_state
 from dashboard_presenters import (
+    build_node_runtime_layer_evidence,
     build_networking_panel,
     build_network_visual_model,
     cni_config_spec_display,
@@ -306,6 +307,7 @@ def summarize(state: dict) -> dict:
     versions = state.get("versions", {})
     summary_state = state.get("summary", {})
     summary_versions = summary_state.get("versions", {})
+    node_layer_evidence = build_node_runtime_layer_evidence(state)
 
     pods_text = runtime.get("pods", "")
     pod_lines = [l for l in pods_text.splitlines() if l.strip()]
@@ -364,28 +366,16 @@ def summarize(state: dict) -> dict:
     }.get(policy_status, policy_status)
 
     cni_summary_line = cni_summary_text(state)
-
-    if kubelet_ok is True:
-        kubelet_text = (
-            "kubelet running | cleanup/history noise observed"
-            if kubelet_transitional_note
-            else "kubelet running"
-        )
-    elif kubelet_ok is False:
-        kubelet_text = "kubelet issue"
-    else:
-        kubelet_text = "kubelet status unknown (no host access)"
-
-    if containerd_ok is True:
-        containerd_text = (
-            "containerd running | cleanup/history noise observed"
-            if containerd_transitional_note
-            else "containerd running"
-        )
-    elif containerd_ok is False:
-        containerd_text = "containerd issue"
-    else:
-        containerd_text = "containerd status unknown"
+    kubelet_text = "<br>".join(node_layer_evidence.get("L4.1", [])) or "kubelet status unknown"
+    kube_proxy_text = "<br>".join(node_layer_evidence.get("L4.2", [])) or "kube-proxy not directly observed"
+    cni_text = cni_summary_line
+    cni_node_lines = node_layer_evidence.get("L4.3", [])
+    if cni_node_lines:
+        cni_text = f"{cni_summary_line}<br>{'<br>'.join(cni_node_lines)}"
+    containerd_text = "<br>".join(node_layer_evidence.get("L3", [])) or "containerd status unknown"
+    oci_text = "<br>".join(node_layer_evidence.get("L2", [])) or (runc_ver or "runc version unknown")
+    kernel_text = "<br>".join(node_layer_evidence.get("L1", [])) or f"kernel {kernel_ver or 'unknown'}"
+    infra_text = "<br>".join(node_layer_evidence.get("L0", [])) or "VM / virtual hardware"
 
     return {
         "L9": ("User workloads present", True),
@@ -407,12 +397,12 @@ def summarize(state: dict) -> dict:
             True,
         ),
         "L4.1": (kubelet_text, kubelet_ok is True),
-        "L4.2": ("kube-proxy / service routing", True),
-        "L4.3": (cni_summary_line, True),
+        "L4.2": (kube_proxy_text, True),
+        "L4.3": (cni_text, True),
         "L3": (containerd_text, containerd_ok is True),
-        "L2": (runc_ver or "runc version unknown", True),
-        "L1": (f"kernel {kernel_ver or 'unknown'}", True),
-        "L0": ("VM / virtual hardware", True),
+        "L2": (oci_text, True),
+        "L1": (kernel_text, True),
+        "L0": (infra_text, True),
     }
 
 

@@ -46,7 +46,8 @@ def cni_summary_text(state: Dict) -> str:
     cni_name = summary_versions.get("cni", versions.get("cni", "")) or "unknown"
     cni_display_name = cni_name.capitalize() if cni_name != "unknown" else "unknown"
     cni_confidence = cni_evidence.get("confidence", "unknown")
-    cni_classification_state = cni_evidence.get("classification", {}).get("state", "unknown")
+    classification = cni_evidence.get("classification", {})
+    cni_classification_state = classification.get("state", "unknown")
     cluster_footprint = cni_evidence.get("cluster_footprint", {}).get(
         "summary",
         "cluster footprint not directly observed",
@@ -56,10 +57,17 @@ def cni_summary_text(state: Dict) -> str:
     cluster_level_cni = cni_evidence.get("cluster_level", {}).get("cni", "unknown")
     reconciliation = cni_evidence.get("reconciliation", "unknown")
     health_label = cni_status_label(state)
+    parsed_nodes = _parse_node_records(state.get("runtime", {}).get("nodes_json", ""))
+    local_node = _normalize_local_node_name(state.get("runtime", {}), parsed_nodes)
+    previous_cni = classification.get("previous_detected_cni", "unknown")
 
     text = f"{cni_display_name} | {health_label} | {cni_confidence} confidence"
     if state.get("health", {}).get("cni_ok") == "healthy" and capability_summary == "policy-capable dataplane likely":
         text = f"{cni_display_name} | working | policy-capable | {cni_confidence} confidence"
+    if cni_classification_state == "residual_node_dataplane_state":
+        node_label = local_node or "observed node"
+        residue_label = previous_cni.capitalize() if previous_cni not in {"", "unknown"} else "previous CNI"
+        text = f"{cni_display_name} | working | {node_label} residual {residue_label} artifacts"
     elif cni_classification_state not in {"", "unknown", "healthy_calico", "healthy_cilium"}:
         text = f"{cni_display_name} | {cni_classification_state} | {cni_confidence} confidence"
 
@@ -73,7 +81,7 @@ def cni_summary_text(state: Dict) -> str:
             f"cluster missing, node config says {node_level_cni}"
         )
 
-    if reconciliation == "conflict":
+    if reconciliation == "conflict" and cni_classification_state != "residual_node_dataplane_state":
         return (
             f"{cni_name or 'unknown'} | {cni_classification_state} | "
             f"cluster {cluster_level_cni or 'unknown'} vs node {node_level_cni or 'unknown'}"
@@ -249,6 +257,129 @@ def _parse_node_records(nodes_json_text: str) -> List[Dict[str, Any]]:
         )
     nodes.sort(key=lambda node: (0 if node["role"] == "control-plane" else 1, node["name"]))
     return nodes
+
+
+def _parse_ready_node_names(nodes_text: str) -> List[str]:
+    ready_nodes = []
+    lines = [line for line in nodes_text.splitlines() if line.strip()]
+    for line in lines[1:]:
+        parts = line.split()
+        if len(parts) >= 2 and parts[1] == "Ready":
+            ready_nodes.append(parts[0])
+    return ready_nodes
+
+
+def _normalize_local_node_name(runtime: Dict[str, Any], parsed_nodes: List[Dict[str, Any]]) -> str:
+    hostname = (runtime.get("hostname", "") or "").strip()
+    if not hostname:
+        return ""
+    node_names = [node.get("name", "") for node in parsed_nodes if node.get("name")]
+    if hostname in node_names:
+        return hostname
+    for node_name in node_names:
+        if hostname.startswith(node_name) or node_name.startswith(hostname):
+            return node_name
+    return hostname
+
+
+def _running_pod_nodes(pods_json_text: str, matches: List[str]) -> List[str]:
+    data = _parse_json_text(pods_json_text)
+    items = data.get("items", []) if isinstance(data, dict) else []
+    nodes = set()
+    for item in items:
+        metadata = item.get("metadata", {}) or {}
+        pod_name = str(metadata.get("name", "")).lower()
+        if not any(match in pod_name for match in matches):
+            continue
+        status = item.get("status", {}) or {}
+        if status.get("phase") != "Running":
+            continue
+        node_name = str((item.get("spec", {}) or {}).get("nodeName", "")).strip()
+        if node_name:
+            nodes.add(node_name)
+    return sorted(nodes)
+
+
+def build_node_runtime_layer_evidence(state: Dict[str, Any]) -> Dict[str, List[str]]:
+    runtime = state.get("runtime", {})
+    health = state.get("health", {})
+    summary_versions = state.get("summary", {}).get("versions", {})
+    cni_evidence = state.get("evidence", {}).get("cni", {})
+    classification = cni_evidence.get("classification", {})
+
+    parsed_nodes = _parse_node_records(runtime.get("nodes_json", ""))
+    local_node = _normalize_local_node_name(runtime, parsed_nodes)
+    ready_nodes = _parse_ready_node_names(runtime.get("nodes", ""))
+    cni_name = summary_versions.get("cni", "unknown")
+    previous_cni = classification.get("previous_detected_cni", "unknown")
+
+    node_runtime_map: Dict[str, str] = {}
+    lines = [line for line in runtime.get("nodes", "").splitlines() if line.strip()]
+    for line in lines[1:]:
+        parts = line.split()
+        if len(parts) >= 6:
+            node_runtime_map[parts[0]] = parts[-1]
+
+    kube_proxy_nodes = _running_pod_nodes(runtime.get("pods_json", ""), ["kube-proxy"])
+    cni_agent_match = ["calico-node"] if cni_name == "calico" else ["cilium"] if cni_name == "cilium" else []
+    cni_agent_nodes = _running_pod_nodes(runtime.get("pods_json", ""), cni_agent_match) if cni_agent_match else []
+
+    kubelet_lines: List[str] = []
+    for node in ready_nodes:
+        if node == local_node and health.get("kubelet_ok") is True:
+            kubelet_lines.append(f"{node}: running (host observed)")
+        elif node == local_node and health.get("kubelet_ok") is False:
+            kubelet_lines.append(f"{node}: issue (host observed)")
+        else:
+            kubelet_lines.append(f"{node}: Ready (cluster observed)")
+
+    kube_proxy_lines = [f"{node}: kube-proxy running" for node in kube_proxy_nodes] or ["kube-proxy not directly observed"]
+
+    cni_lines: List[str] = []
+    for node in cni_agent_nodes:
+        if (
+            node == local_node
+            and classification.get("state") == "residual_node_dataplane_state"
+            and previous_cni not in {"", "unknown"}
+        ):
+            cni_lines.append(f"{node}: {cni_name.capitalize()} active; stale {previous_cni.capitalize()} residuals")
+        else:
+            cni_lines.append(f"{node}: {cni_name.capitalize()} active")
+    if not cni_lines:
+        cni_lines.append(f"{cni_name.capitalize() if cni_name not in {'', 'unknown'} else 'CNI'} not directly observed per node")
+
+    containerd_lines: List[str] = []
+    for node in [node.get("name", "") for node in parsed_nodes if node.get("name")]:
+        runtime_label = node_runtime_map.get(node, "")
+        if node == local_node and health.get("containerd_ok") is True:
+            detail = runtime_label or "containerd"
+            containerd_lines.append(f"{node}: running ({detail})")
+        elif runtime_label:
+            containerd_lines.append(f"{node}: {runtime_label}")
+        else:
+            containerd_lines.append(f"{node}: runtime not directly observed")
+
+    oci_lines: List[str] = []
+    if local_node:
+        runc_version = state.get("versions", {}).get("runc", "") or "runc observed on local node"
+        oci_lines.append(f"{local_node}: {runc_version}")
+
+    kernel_lines: List[str] = []
+    if local_node:
+        kernel_version = state.get("versions", {}).get("kernel", "") or "kernel observed on local node"
+        kernel_lines.append(f"{local_node}: {kernel_version}")
+
+    infra_lines: List[str] = [f"{node.get('name')}: VM-backed node" for node in parsed_nodes if node.get("name")]
+
+    return {
+        "L4.1": kubelet_lines,
+        "L4.2": kube_proxy_lines,
+        "L4.3": cni_lines,
+        "L3": containerd_lines,
+        "L2": oci_lines,
+        "L1": kernel_lines,
+        "L0": infra_lines,
+    }
 
 
 def _parse_application_pods(pods_json_text: str) -> List[Dict[str, Any]]:
@@ -461,6 +592,7 @@ def build_networking_panel(state: Dict) -> Dict[str, Any]:
     confidence = cni_evidence.get("confidence", "unknown").capitalize()
     status = cni_status_label(state).capitalize()
     classification_label = classification.get("state", "unknown").replace("_", " ")
+    previous_cni = classification.get("previous_detected_cni", "unknown")
     policy_supported = _bool_label(capabilities.get("network_policy", None))
     policy_present = {
         "present": "Present",
@@ -471,6 +603,7 @@ def build_networking_panel(state: Dict) -> Dict[str, Any]:
     components = _collect_networking_components(state)
     networking_namespaces = _observed_networking_namespaces(components)
     parsed_nodes = _parse_node_records(runtime.get("nodes_json", ""))
+    local_node = _normalize_local_node_name(runtime, parsed_nodes)
     ready_node_names = []
     for line in runtime.get("nodes", "").splitlines()[1:]:
         parts = line.split()
@@ -517,9 +650,8 @@ def build_networking_panel(state: Dict) -> Dict[str, Any]:
     direct_node_config_observed = node_level.get("cni", "unknown") not in {"", "unknown"}
     if node_level.get("cni", "unknown") not in {"", "unknown"}:
         config_detail = node_level.get("selected_file", "") or "recognized config"
-        node_evidence.append(
-            f"Node config points to {node_level.get('cni')} via {config_detail}."
-        )
+        node_label = local_node or "observed node"
+        node_evidence.append(f"{node_label} config points to {node_level.get('cni')} via {config_detail}.")
     else:
         node_evidence.append(
             "Direct host-level CNI config is not readable here, so node evidence falls back to node readiness, node-local agents, and runtime state."
@@ -554,7 +686,7 @@ def build_networking_panel(state: Dict) -> Dict[str, Any]:
             )
 
     if health.get("kubelet_ok") is True:
-        observed_host = runtime.get("hostname", "").strip()
+        observed_host = local_node or runtime.get("hostname", "").strip()
         if observed_host:
             node_evidence.append(
                 f"Host evidence shows kubelet active on {observed_host}, confirming the node agent is up."
@@ -563,8 +695,9 @@ def build_networking_panel(state: Dict) -> Dict[str, Any]:
             node_evidence.append("Host evidence shows kubelet active on the observed node.")
 
     if health.get("containerd_ok") is True:
+        observed_host = local_node or runtime.get("hostname", "").strip() or "observed node"
         node_evidence.append(
-            "Host evidence shows containerd active on the observed node; this confirms runtime state rather than CNI identity."
+            f"Host evidence shows containerd active on {observed_host}; this confirms runtime state rather than CNI identity."
         )
 
     if config_spec_version.get("value", "unknown") not in {"", "unknown"}:
@@ -577,7 +710,12 @@ def build_networking_panel(state: Dict) -> Dict[str, Any]:
         )
     elif calico_runtime.get("status") == "bird_ready_no_established_peer":
         node_evidence.append("Calico runtime check reached BIRD, but no established BGP peers were observed.")
-    if classification.get("state") == "stale_interfaces":
+    if classification.get("state") == "residual_node_dataplane_state" and previous_cni not in {"", "unknown"}:
+        node_label = local_node or "observed node"
+        node_evidence.append(
+            f"{node_label} still shows stale {previous_cni.capitalize()} interfaces/routes, even though {cni_name.capitalize()} is active."
+        )
+    elif classification.get("state") == "stale_interfaces":
         node_evidence.append("Mixed dataplane interfaces are still present on the local node.")
     elif classification.get("state") == "stale_node_config":
         node_evidence.append("Node-level config does not match the current cluster-side CNI footprint.")
@@ -647,7 +785,13 @@ def build_networking_panel(state: Dict) -> Dict[str, Any]:
     interpretation = f"{cni_name.capitalize() if cni_name not in {'', 'unknown'} else 'Networking state'}"
     if cni_name not in {"", "unknown"}:
         interpretation = f"{cni_name.capitalize()} is the active CNI"
-    if status.lower() == "working":
+    if classification.get("state") == "residual_node_dataplane_state" and previous_cni not in {"", "unknown"}:
+        node_label = local_node or "observed node"
+        interpretation += (
+            f" and is healthy at cluster level; {node_label} still has stale "
+            f"{previous_cni.capitalize()} residual interfaces/routes."
+        )
+    elif status.lower() == "working":
         interpretation += " and the networking dataplane appears healthy."
     elif status.lower() == "degraded":
         interpretation += " but the networking state is currently degraded."
@@ -664,7 +808,11 @@ def build_networking_panel(state: Dict) -> Dict[str, Any]:
         "CNI": cni_name.capitalize() if cni_name not in {"", "unknown"} else "Unknown",
         "Confidence": confidence,
         "Status": status,
-        "Mode": classification_label.capitalize(),
+        "Mode": (
+            f"{cni_name.capitalize()} active; {local_node or 'observed node'} residual {previous_cni.capitalize()} artifacts"
+            if classification.get("state") == "residual_node_dataplane_state" and previous_cni not in {"", "unknown"}
+            else classification_label.capitalize()
+        ),
         "Policy": f"{policy_present} / support {policy_supported}",
         "Observability": observability,
     }
