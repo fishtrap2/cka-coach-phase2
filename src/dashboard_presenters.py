@@ -826,17 +826,53 @@ def render_network_visual_html(model: Dict[str, Any]) -> str:
     policy_bits = "".join(
         f"<span class='netviz-chip netviz-chip-side'>{_html_escape(item)}</span>" for item in policy_observability
     ) or "<span class='netviz-chip netviz-chip-side'>No policy / observability components directly observed</span>"
-    service_bits = "".join(
-        (
-            f"<div class='netviz-svc'>"
-            f"<div class='netviz-svc-name'>{_html_escape(service['namespace'])}/{_html_escape(service['name'])}</div>"
-            f"<div class='netviz-svc-ip'>{_html_escape(service['cluster_ip'])}</div>"
-            f"</div>"
-        )
-        for service in services
-    ) or "<div class='netviz-empty'>No ClusterIP services highlighted from current evidence.</div>"
     underlay_label = " ↔ ".join(_html_escape(ip) for ip in underlay_ips) or "node IPs not directly observed"
     pod_cidr_label = ", ".join(_html_escape(cidr) for cidr in pod_cidrs) or _html_escape(model.get("cluster_pod_network", "unknown"))
+    service_network_label = (
+        ", ".join(_html_escape(service.get("cluster_ip", "")) for service in services[:3] if service.get("cluster_ip"))
+        or "ClusterIP examples not directly observed"
+    )
+
+    def _simple_node_label(node: Dict[str, Any], fallback: str) -> str:
+        if node.get("role") == "control-plane":
+            return "CP"
+        if node:
+            return "Worker"
+        return fallback
+
+    def _icon_card(symbol: str, title: str, subtitle: str = "", extra_class: str = "") -> str:
+        return (
+            f"<div class='netviz-icon-card {extra_class}'>"
+            f"<div class='netviz-icon-symbol'>{_html_escape(symbol)}</div>"
+            f"<div class='netviz-icon-title'>{_html_escape(title)}</div>"
+            f"<div class='netviz-icon-subtitle'>{_html_escape(subtitle)}</div>"
+            f"</div>"
+        )
+
+    left_node = nodes[0] if nodes else {}
+    right_node = nodes[1] if len(nodes) > 1 else {}
+    left_node_label = _simple_node_label(left_node, "Node")
+    right_node_label = _simple_node_label(right_node, "Node")
+    left_node_icon = _icon_card("node", left_node_label, left_node.get("internal_ip", "IP unknown"))
+    right_node_icon = _icon_card("node", right_node_label, right_node.get("internal_ip", "IP unknown"))
+    policy_icon = _icon_card("policy", "Policy plane", "Goldmane / Whisker", "netviz-policy-card")
+
+    service_icons = "".join(
+        _icon_card(
+            "svc",
+            service.get("name", "service"),
+            service.get("cluster_ip", "ClusterIP unknown"),
+        )
+        for service in services[:3]
+    ) or "<div class='netviz-empty'>No ClusterIP services highlighted.</div>"
+    left_pod_icons = "".join(
+        _icon_card("pod", pod.get("name", "pod"), pod.get("pod_ip", "pod IP unknown") or "pod IP unknown")
+        for pod in left_node.get("pods", [])[:2]
+    ) or "<div class='netviz-empty'>No highlighted pods.</div>"
+    right_pod_icons = "".join(
+        _icon_card("pod", pod.get("name", "pod"), pod.get("pod_ip", "pod IP unknown") or "pod IP unknown")
+        for pod in right_node.get("pods", [])[:2]
+    ) or "<div class='netviz-empty'>No highlighted pods.</div>"
 
     left_node_html = node_cards[0] if node_cards else ""
     right_node_html = node_cards[1] if len(node_cards) > 1 else ""
@@ -946,74 +982,75 @@ def render_network_visual_html(model: Dict[str, Any]) -> str:
         color: #bfdbfe;
         margin-bottom: 8px;
       }}
-      .netviz-services-lane {{
-        border: 1px dashed #7c3aed;
+      .netviz-layer-diagram {{
+        display: grid;
+        gap: 10px;
+      }}
+      .netviz-layer {{
+        border: 1px solid #334155;
         border-radius: 10px;
         padding: 10px;
-        margin-bottom: 12px;
-        background: #181327;
-      }}
-      .netviz-services-grid {{
-        display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
-        gap: 8px;
-        margin-top: 8px;
-      }}
-      .netviz-svc {{
-        border: 1px solid #6d28d9;
-        border-radius: 8px;
-        padding: 8px;
-        background: #1f1435;
-      }}
-      .netviz-svc-name {{
-        font-size: 12px;
-        color: #f5f3ff;
-      }}
-      .netviz-svc-ip {{
-        font-size: 12px;
-        color: #c4b5fd;
-      }}
-      .netviz-address-grid {{
-        display: grid;
-        grid-template-columns: minmax(240px, 1fr) minmax(240px, 1fr) minmax(240px, 1fr);
-        gap: 14px;
-        align-items: start;
-      }}
-      .netviz-address-node {{
-        border: 1px solid #334155;
-        border-radius: 12px;
-        padding: 12px;
         background: #151a22;
       }}
-      .netviz-address-plane {{
-        border: 1px solid #35506b;
-        border-radius: 12px;
-        padding: 12px;
-        background: #121924;
+      .netviz-layer-row {{
+        display: grid;
+        grid-template-columns: 140px 1fr;
+        gap: 10px;
+        align-items: center;
       }}
-      .netviz-address-subtitle {{
+      .netviz-layer-name {{
         font-size: 12px;
         font-weight: 700;
         color: #cbd5e1;
-        margin-bottom: 8px;
       }}
-      .netviz-pod-lane {{
-        display: grid;
+      .netviz-layer-network {{
+        font-size: 12px;
+        color: #94a3b8;
+        margin-top: 2px;
+      }}
+      .netviz-icons {{
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 10px;
+      }}
+      .netviz-icon-group {{
+        display: flex;
+        align-items: center;
         gap: 8px;
+        flex-wrap: wrap;
       }}
-      .netviz-pod-mini {{
-        border-left: 3px solid #60a5fa;
-        background: #0f172a;
-        border-radius: 8px;
-        padding: 8px 9px;
+      .netviz-icon-card {{
+        border: 1px solid #475569;
+        border-radius: 10px;
+        padding: 8px 10px;
+        background: #101723;
+        min-width: 96px;
+        text-align: center;
       }}
-      .netviz-pod-mini-name {{
+      .netviz-icon-symbol {{
+        font-size: 18px;
+        line-height: 1;
+      }}
+      .netviz-icon-title {{
         font-size: 12px;
         color: #f8fafc;
+        margin-top: 4px;
       }}
-      .netviz-pod-mini-ip {{
-        font-size: 12px;
+      .netviz-icon-subtitle {{
+        font-size: 11px;
         color: #93c5fd;
+        margin-top: 2px;
+      }}
+      .netviz-connector {{
+        flex: 1;
+        border-top: 2px solid #64748b;
+        min-width: 18px;
+        opacity: 0.8;
+      }}
+      .netviz-policy-card {{
+        border-color: #35506b;
+        background: #121924;
       }}
       .netviz-node {{
         border: 1px solid #334155;
@@ -1169,38 +1206,49 @@ def render_network_visual_html(model: Dict[str, Any]) -> str:
       </div>
       {"<div class='netviz-extra-nodes'>" + extra_nodes_html + "</div>" if extra_nodes_html else ""}
       <div class="netviz-addressing">
-        <div class="netviz-addressing-title">Addressing / services view</div>
-        <div class="netviz-services-lane">
-          <div class="netviz-label">Services / ClusterIPs</div>
-          <div class="netviz-services-grid">{service_bits}</div>
-        </div>
-        <div class="netviz-address-grid">
-          <div class="netviz-address-node">
-            <div class="netviz-address-subtitle">{_html_escape(nodes[0].get('name', 'cp') if nodes else 'node')}</div>
-            <div class="netviz-chip">node IP: {_html_escape(nodes[0].get('internal_ip', 'unknown') if nodes else 'unknown')}</div>
-            <div class="netviz-chip">pod CIDR: {_html_escape(nodes[0].get('pod_cidr', 'unknown') if nodes else 'unknown')}</div>
-            <div class="netviz-pod-lane">
-              {"".join(
-                f"<div class='netviz-pod-mini'><div class='netviz-pod-mini-name'>{_html_escape(pod['namespace'])}/{_html_escape(pod['name'])}</div><div class='netviz-pod-mini-ip'>{_html_escape(pod.get('pod_ip', 'pod IP unknown') or 'pod IP unknown')}</div></div>"
-                for pod in (nodes[0].get('pods', []) if nodes else [])
-              ) or "<div class='netviz-empty'>No highlighted workload pods.</div>"}
+        <div class="netviz-addressing-title">Network addressing diagram</div>
+        <div class="netviz-layer-diagram">
+          <div class="netviz-layer">
+            <div class="netviz-layer-row">
+              <div>
+                <div class="netviz-layer-name">Services network</div>
+                <div class="netviz-layer-network">{service_network_label}</div>
+              </div>
+              <div class="netviz-icons">{service_icons}</div>
             </div>
           </div>
-          <div class="netviz-address-plane">
-            <div class="netviz-address-subtitle">Policy + observability plane</div>
-            <div class="netviz-chip netviz-chip-side">{_html_escape(headline.get('overlay', 'unknown'))}</div>
-            {"".join(f"<div class='netviz-chip netviz-chip-side'>{_html_escape(item)}</div>" for item in policy_observability) or "<div class='netviz-empty'>No policy or observability components highlighted.</div>"}
-            <div class="netviz-footnote">Policy intent and flow visibility sit over service and pod addressing, between the two nodes and their workloads.</div>
+          <div class="netviz-layer">
+            <div class="netviz-layer-row">
+              <div>
+                <div class="netviz-layer-name">Pod network</div>
+                <div class="netviz-layer-network">{pod_cidr_label}</div>
+              </div>
+              <div class="netviz-icons">
+                <div class="netviz-icon-group">{left_pod_icons}</div>
+                <div class="netviz-connector"></div>
+                {policy_icon}
+                <div class="netviz-connector"></div>
+                <div class="netviz-icon-group">{right_pod_icons}</div>
+              </div>
+            </div>
           </div>
-          <div class="netviz-address-node">
-            <div class="netviz-address-subtitle">{_html_escape(nodes[1].get('name', 'worker1') if len(nodes) > 1 else 'node')}</div>
-            <div class="netviz-chip">node IP: {_html_escape(nodes[1].get('internal_ip', 'unknown') if len(nodes) > 1 else 'unknown')}</div>
-            <div class="netviz-chip">pod CIDR: {_html_escape(nodes[1].get('pod_cidr', 'unknown') if len(nodes) > 1 else 'unknown')}</div>
-            <div class="netviz-pod-lane">
-              {"".join(
-                f"<div class='netviz-pod-mini'><div class='netviz-pod-mini-name'>{_html_escape(pod['namespace'])}/{_html_escape(pod['name'])}</div><div class='netviz-pod-mini-ip'>{_html_escape(pod.get('pod_ip', 'pod IP unknown') or 'pod IP unknown')}</div></div>"
-                for pod in (nodes[1].get('pods', []) if len(nodes) > 1 else [])
-              ) or "<div class='netviz-empty'>No highlighted workload pods.</div>"}
+          <div class="netviz-layer">
+            <div class="netviz-layer-row">
+              <div>
+                <div class="netviz-layer-name">Node network</div>
+                <div class="netviz-layer-network">{underlay_label}</div>
+              </div>
+              <div class="netviz-icons">
+                {left_node_icon}
+                <div class="netviz-connector"></div>
+                <div class="netviz-icon-card netviz-policy-card">
+                  <div class="netviz-icon-symbol">flow</div>
+                  <div class="netviz-icon-title">Observed flow plane</div>
+                  <div class="netviz-icon-subtitle">{_html_escape(headline.get('overlay', 'unknown'))}</div>
+                </div>
+                <div class="netviz-connector"></div>
+                {right_node_icon}
+              </div>
             </div>
           </div>
         </div>
