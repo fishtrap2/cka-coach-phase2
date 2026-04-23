@@ -121,9 +121,12 @@ def _extract_image_tag(image: str) -> str:
 
 def _component_definitions() -> List[Dict[str, str]]:
     return [
+        {"key": "tigera-operator", "label": "Tigera Operator", "match": "tigera-operator"},
         {"key": "calico-node", "label": "calico-node", "match": "calico-node"},
+        {"key": "csi-node-driver", "label": "csi-node-driver", "match": "csi-node-driver"},
         {"key": "calico-kube-controllers", "label": "calico-kube-controllers", "match": "calico-kube-controllers"},
         {"key": "calico-apiserver", "label": "calico-apiserver", "match": "calico-apiserver"},
+        {"key": "calico-typha", "label": "calico-typha", "match": "calico-typha"},
         {"key": "kube-proxy", "label": "kube-proxy", "match": "kube-proxy"},
         {"key": "goldmane", "label": "Goldmane", "match": "goldmane"},
         {"key": "whisker", "label": "Whisker", "match": "whisker"},
@@ -144,6 +147,8 @@ def _ready_container_count(item: Dict[str, Any]) -> tuple[int, int]:
 def _collect_networking_components(state: Dict) -> Dict[str, Dict[str, Any]]:
     pods_json = _parse_json_text(state.get("runtime", {}).get("pods_json", ""))
     items = pods_json.get("items", []) if isinstance(pods_json, dict) else []
+    daemonsets_text = state.get("runtime", {}).get("daemonsets", "")
+    deployments_text = state.get("runtime", {}).get("deployments", "")
 
     components: Dict[str, Dict[str, Any]] = {}
     for definition in _component_definitions():
@@ -154,6 +159,8 @@ def _collect_networking_components(state: Dict) -> Dict[str, Dict[str, Any]]:
             "namespaces": set(),
             "ready_pods": 0,
             "tags": set(),
+            "resource_kinds": set(),
+            "resource_names": set(),
         }
 
     for item in items:
@@ -179,6 +186,27 @@ def _collect_networking_components(state: Dict) -> Dict[str, Dict[str, Any]]:
                 tag = _extract_image_tag(image)
                 if tag:
                     component["tags"].add(tag)
+
+    def _match_resources(resource_text: str, kind: str):
+        lines = [line for line in resource_text.splitlines() if line.strip()]
+        data_lines = lines[1:] if len(lines) > 1 else []
+        for line in data_lines:
+            parts = line.split()
+            if len(parts) < 2:
+                continue
+            namespace, resource_name = parts[0], parts[1]
+            lower_name = resource_name.lower()
+            for definition in _component_definitions():
+                if definition["match"] not in lower_name:
+                    continue
+                component = components[definition["key"]]
+                component["present"] = True
+                component["namespaces"].add(namespace)
+                component["resource_kinds"].add(kind)
+                component["resource_names"].add(resource_name)
+
+    _match_resources(daemonsets_text, "DaemonSet")
+    _match_resources(deployments_text, "Deployment")
 
     return components
 
@@ -619,6 +647,29 @@ def build_networking_panel(state: Dict) -> Dict[str, Any]:
         observability = "Whisker available"
     else:
         observability = "No observability components observed"
+    operator_managed = components.get("tigera-operator", {}).get("present") or "tigera installation present" in [
+        signal.lower() for signal in platform_signals
+    ]
+
+    node_daemonset_labels = []
+    for key in ["calico-node", "kube-proxy", "csi-node-driver", "cilium", "cilium-envoy"]:
+        component = components.get(key, {})
+        if component.get("present") and "DaemonSet" in component.get("resource_kinds", set()):
+            node_daemonset_labels.append(component.get("label", key))
+
+    supporting_deployment_labels = []
+    for key in [
+        "calico-kube-controllers",
+        "calico-apiserver",
+        "calico-typha",
+        "goldmane",
+        "whisker",
+        "tigera-operator",
+        "cilium-operator",
+    ]:
+        component = components.get(key, {})
+        if component.get("present") and "Deployment" in component.get("resource_kinds", set()):
+            supporting_deployment_labels.append(component.get("label", key))
 
     cluster_evidence = []
     if cluster_level.get("cni", "unknown") not in {"", "unknown"}:
@@ -626,11 +677,17 @@ def build_networking_panel(state: Dict) -> Dict[str, Any]:
         cluster_evidence.append(
             f"Cluster detection identifies {cluster_level.get('cni')} from current pods, daemonsets, and platform objects across {namespace_text}."
         )
+    if operator_managed:
+        cluster_evidence.append("Installation model: operator-managed via Tigera Operator.")
     if cluster_footprint.get("daemonsets"):
         daemonset_bits = []
         for ds in cluster_footprint.get("daemonsets", [])[:3]:
             daemonset_bits.append(f"{ds.get('name')} {ds.get('ready', '?')}/{ds.get('desired', '?')} ready")
         cluster_evidence.append("Daemonsets: " + ", ".join(daemonset_bits))
+    if node_daemonset_labels:
+        cluster_evidence.append("Node DaemonSets: " + ", ".join(node_daemonset_labels[:5]))
+    if supporting_deployment_labels:
+        cluster_evidence.append("Supporting Deployments: " + ", ".join(supporting_deployment_labels[:6]))
     if networking_namespaces:
         cluster_evidence.append("Observed networking namespaces: " + ", ".join(networking_namespaces[:4]))
     if platform_signals:
@@ -727,9 +784,12 @@ def build_networking_panel(state: Dict) -> Dict[str, Any]:
 
     component_rows = []
     for key in [
+        "tigera-operator",
         "calico-node",
+        "csi-node-driver",
         "calico-kube-controllers",
         "calico-apiserver",
+        "calico-typha",
         "kube-proxy",
         "goldmane",
         "whisker",
@@ -737,17 +797,20 @@ def build_networking_panel(state: Dict) -> Dict[str, Any]:
         "cilium-operator",
     ]:
         component = components.get(key, {})
-        if not component.get("present") and key not in {"goldmane", "whisker", "calico-apiserver"}:
+        if not component.get("present") and key not in {"goldmane", "whisker", "calico-apiserver", "calico-typha", "tigera-operator"}:
             continue
         if component.get("present"):
             detail = f"{component.get('ready_pods', 0)} pod(s) ready"
             if component.get("namespaces"):
                 detail += f" in {', '.join(sorted(component.get('namespaces', [])))}"
+            if component.get("resource_names"):
+                detail += f" | resources: {', '.join(sorted(component.get('resource_names', []))[:3])}"
         else:
             detail = "not directly observed"
         component_rows.append(
             {
                 "Component": component.get("label", key),
+                "Kind": " / ".join(sorted(component.get("resource_kinds", set()))) or "Pod footprint",
                 "Presence": "present" if component.get("present") else "not observed",
                 "Detail": detail,
             }
@@ -771,7 +834,17 @@ def build_networking_panel(state: Dict) -> Dict[str, Any]:
             "Source": cni_version.get("source", "unknown"),
         }
     )
-    for key in ["calico-node", "calico-kube-controllers", "calico-apiserver", "goldmane", "whisker", "kube-proxy"]:
+    for key in [
+        "tigera-operator",
+        "calico-node",
+        "csi-node-driver",
+        "calico-kube-controllers",
+        "calico-apiserver",
+        "calico-typha",
+        "goldmane",
+        "whisker",
+        "kube-proxy",
+    ]:
         component = components.get(key, {})
         if component.get("present"):
             version_rows.append(
@@ -815,6 +888,7 @@ def build_networking_panel(state: Dict) -> Dict[str, Any]:
         ),
         "Policy": f"{policy_present} / support {policy_supported}",
         "Observability": observability,
+        "Install model": "Operator-managed" if operator_managed else "Pod / object detected",
     }
 
     return {

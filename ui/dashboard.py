@@ -332,9 +332,15 @@ def summarize(state: dict) -> dict:
     daemonsets_text = runtime.get("daemonsets", "")
     daemonset_lines = [line for line in daemonsets_text.splitlines() if line.strip()]
     daemonset_data_lines = daemonset_lines[1:] if len(daemonset_lines) > 1 else []
-    daemonset_names = [line.split()[0] for line in daemonset_data_lines if line.split()]
+    daemonset_names = [line.split()[1] for line in daemonset_data_lines if len(line.split()) >= 2]
     daemonset_count = len(daemonset_names)
     daemonset_preview = ", ".join(daemonset_names[:3]) if daemonset_names else "none directly observed"
+    deployments_text = runtime.get("deployments", "")
+    deployment_lines = [line for line in deployments_text.splitlines() if line.strip()]
+    deployment_data_lines = deployment_lines[1:] if len(deployment_lines) > 1 else []
+    deployment_names = [line.split()[1] for line in deployment_data_lines if len(line.split()) >= 2]
+    deployment_count = len(deployment_names)
+    deployment_preview = ", ".join(deployment_names[:4]) if deployment_names else "none directly observed"
     operator_preview = ", ".join(operator_pods[:3]) if operator_pods else "none directly observed"
     namespace_summary = ", ".join(
         f"{namespace} {count}"
@@ -388,12 +394,12 @@ def summarize(state: dict) -> dict:
         "L7": ("Desired-state objects in API", True),
         "L4.5": (f"API server / etcd | {api_ver or 'unknown'}", True),
         "L6": (
-            f"Operator pods: {operator_preview}"
+            f"Operators: {operator_preview}"
             + (f" | count={len(operator_pods)}" if operator_pods else ""),
             True,
         ),
         "L5": (
-            f"Controllers / daemonsets: {daemonset_count} observed | {daemonset_preview}",
+            f"Controllers: ds={daemonset_count}, deploy={deployment_count} | DS: {daemonset_preview} | Deploy: {deployment_preview}",
             True,
         ),
         "L4.1": (kubelet_text, kubelet_ok is True),

@@ -746,6 +746,7 @@ def _summarize_cni_cluster_footprint(
     matched_daemonsets = cluster_level.get("matched_daemonsets", [])
     platform_signals = cluster_level.get("platform_signals", [])
     operator_present = any("operator" in pod.lower() for pod in matched_pods)
+    operator_only_footprint = bool(matched_pods) and all("operator" in pod.lower() for pod in matched_pods)
 
     result = {
         "operator_present": operator_present,
@@ -759,7 +760,9 @@ def _summarize_cni_cluster_footprint(
         return result
 
     if not daemonsets_text.strip() or "kubectl not installed" in daemonsets_text.lower():
-        if matched_pods:
+        if operator_only_footprint:
+            result["summary"] = "operator present"
+        elif matched_pods:
             result["summary"] = "pods present; daemonset footprint not directly observed"
         elif platform_signals:
             result["summary"] = "platform signals present; daemonset footprint not directly observed"
@@ -1220,7 +1223,11 @@ def _classify_cni_state(
     strong_calico = (
         cni_text == "calico"
         and cluster_cni == "calico"
-        and any(ds.get("name") == "calico-node" for ds in cluster_footprint.get("daemonsets", []))
+        and (
+            any(ds.get("name") == "calico-node" for ds in cluster_footprint.get("daemonsets", []))
+            or any("calico-node" in pod.lower() for pod in cluster_level.get("matched_pods", []))
+            or bool(platform_signals)
+        )
         and (calico_runtime.get("status") == "established" or bool(platform_signals))
     )
     strong_cilium = (
@@ -1716,8 +1723,9 @@ def collect_state(
         # cluster policy objects
         "network_policies": _safe_kubectl("kubectl get networkpolicy -A"),
 
-        # cluster daemonsets for CNI footprint summaries
-        "daemonsets": _safe_kubectl("kubectl get daemonsets -n kube-system"),
+        # cluster daemonsets / deployments for networking footprint summaries
+        "daemonsets": _safe_kubectl("kubectl get daemonsets -A"),
+        "deployments": _safe_kubectl("kubectl get deployments -A"),
 
         # operator-managed Calico/Tigera signals
         "tigera_status": _safe_kubectl("kubectl get tigerastatus"),
