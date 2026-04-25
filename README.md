@@ -1,140 +1,173 @@
-# cka-coach Phase 2
+# cka-coach — Phase 2
 
-**Private development repo for the next evolution of cka-coach**
+> "What is actually happening inside your Kubernetes cluster?"
+
+cka-coach is a **Kubernetes learning system** that turns a running cluster into a **teaching instrument panel**.
+
+It helps CKA / LFS258 students understand:
+
+- where workloads live (ELS model)
+- how Kubernetes networking actually works
+- how packets move between pods and nodes
+- how policy and dataplane decisions affect traffic
+- how to debug and reason about cluster state
 
 ---
 
-## Vision
+## Phase 2 — Networking Visibility Milestone (v0.6.0)
 
-> Why leave the cluster to learn Kubernetes networking… when the cluster can teach you from inside?
+Phase 2 introduces a **complete networking understanding layer** grounded in real cluster evidence.
 
-cka-coach Phase 2 evolves the project into an **in-cluster learning assistant** that helps students understand:
+### Networking Panel (Source of Truth)
 
-* where applications live (ELS model)
-* how Kubernetes networking actually works
-* how traffic flows between workloads
-* why connectivity succeeds or fails
-* how policy affects behavior
+- Detects active CNI (Calico, Cilium, etc.)
+- Confidence-based interpretation (not guesses)
+- Policy awareness (NetworkPolicy presence)
+- Observability integration (Goldmane + Whisker)
+- Node-scoped evidence (per-node visibility)
+- Version provenance (from actual running components)
 
-All **from inside the cluster itself**.
+### Network Visual Panel (NEW)
+
+A **first-of-its-kind in-cluster network diagram** showing:
+
+- Pod -> veth -> host -> overlay -> remote node
+- VXLAN / BGP transport
+- Pod CIDRs and node IPs
+- Kernel / namespace reality (netns, veth pairs)
+- Policy + observability plane
+
+This is the "pay dirt" of cka-coach: where abstraction meets reality.
+
+### CNI State Provenance
+
+- Multi-source detection (cluster + node)
+- Distinguishes:
+  - active CNI
+  - residual artifacts
+  - unknown states
+- Prevents false conclusions during migrations
+
+### Known-Good Baseline + Cleanup Lesson
+
+- First **active coaching workflow**
+- Guides student through:
+  - removing stale CNI state
+  - restoring cluster baseline
+- Node-scoped remediation scripts
+- Introduces real-world debugging mindset
+
+### Correct Architecture Representation
+
+cka-coach correctly models:
+
+- **Operator plane** (Tigera Operator)
+- **DaemonSet dataplane** (`calico-node`)
+- **Control components** (controllers, apiserver)
+
+This avoids a major learning gap in most tools.
+
+---
+
+## The ELS Model (Everything Lives Somewhere)
+
+cka-coach is built around the ELS model:
+
+Applications  
+↓  
+Pods  
+↓  
+Kubernetes Objects (desired state)  
+↓  
+Controllers / Operators  
+↓  
+Node Agents (kubelet, kube-proxy, CNI)  
+↓  
+Container Runtime (containerd)  
+↓  
+OCI Runtime (runc)  
+↓  
+Linux Kernel (namespaces, cgroups)  
+↓  
+Infrastructure
+
+Every explanation maps back to **where something actually lives**.
 
 ---
 
 ## Who this is for
 
-Prospective and active **LFS258 / CKA students** who:
-
-* understand basic Kubernetes objects
-* struggle with *where things actually live*
-* want to build intuition for:
-
-  * pod networking
-  * CNI responsibilities
-  * service routing
-  * network policy and Zero Trust concepts
+- CKA / LFS258 students
+- Engineers learning Kubernetes networking
+- Anyone asking:
+  - "why is this not working?"
+  - "where is this actually happening?"
 
 ---
 
-## What is new in Phase 2
+## Example: What you can now see
 
-Phase 2 introduces a **networking and security learning layer** on top of the existing ELS model.
-
-### Core capabilities
-
-* **CNI-aware cluster understanding**
-
-  * Detect and interpret the cluster networking layer
-  * Work across *any CNI plugin*
-  * Reconcile multi-source CNI evidence across cluster-level and node-level signals
-
-* **Network diagram (in-cluster perspective)**
-
-  * Visualize pod → node → CNI → service → destination
-  * Show where the application actually lives in the ELS stack
-
-* **Connectivity explanation**
-
-  * Explain why traffic is allowed or denied
-  * Identify which layer is responsible
-  * Provide evidence and confidence
-  * Distinguish confidence from health/status and surface uncertainty explicitly
-
-* **CNI comparison & migration guidance**
-
-  * Help students understand differences between CNIs
-  * Explain implications of migrating (e.g. bridge → Calico)
-
-* **Progressive visibility**
-
-  * Works generically across clusters
-  * Enhances explanations when richer signals are available
-  * Uses a structured L4.3 explain format for current interpretation, evidence, unverified signals, and conclusion
+- Calico running with VXLAN CrossSubnet
+- Pod CIDRs across nodes
+- Node-to-node overlay transport
+- Policy plane (Goldmane / Whisker)
+- Kernel-level networking constructs
+- Real dataplane (`iptables`)
 
 ---
 
-## CNI-agnostic by design
-
-cka-coach Phase 2 is built to work across:
-
-* default / bridge-based networking
-* advanced CNIs such as Calico or Cilium
-
-The goal is not to teach a specific plugin, but to teach:
-
-> **how Kubernetes networking works, regardless of implementation**
-
----
-
-## Enhanced capabilities (when available)
-
-When advanced networking platforms are present, cka-coach can provide:
-
-* richer traffic reasoning
-* policy-aware explanations
-* safer “what-if” reasoning about connectivity
-
-These are **enhancements**, not requirements.
-
----
-
-## Product philosophy
+## Product Philosophy
 
 cka-coach is not a dashboard.
 
-It is a **learning system** that:
+It is a **teaching system** that:
 
-1. explains what it sees
-2. explains why it thinks that
-3. maps everything back to the ELS model
-4. highlights uncertainty when present
-
-Phase 2 also maintains an explicit explanation quality bar so new changes can
-be compared against a strong student-facing standard:
-
-* [Explanation Quality Bar](docs/explanation-quality-bar.md)
+1. Shows current state
+2. Explains why
+3. Provides evidence
+4. Highlights uncertainty
+5. Guides the student forward
 
 ---
 
-## Phase 2 focus areas
+## How to run
 
-* CNI detection and abstraction layer
-* Network diagram and datapath explanation
-* Connectivity reasoning (pod ↔ pod / service)
-* Introductory policy reasoning (allow/deny)
-* CNI comparison and migration guidance
+### From source
+
+```bash
+git clone https://github.com/fishtrap2/cka-coach-phase2.git
+cd cka-coach-phase2
+python3 -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
+export OPENAI_API_KEY=your_key_here
+streamlit run ui/dashboard.py
+```
+
+---
+
+## Roadmap
+
+Next steps:
+
+- Guided install lessons (Calico, Cilium)
+- Policy reasoning (allow/deny simulation)
+- Multi-CNI comparison mode
+- Agent-driven troubleshooting workflows
+- MCP / tool integration for deeper system introspection
 
 ---
 
 ## Status
 
-Phase 2 is under active development in this private repository.
-
-The public Phase 1 prototype is available here:
-https://github.com/fishtrap2/cka-coach
+- Phase 1: completed (public repo)
+- Phase 2: networking foundation complete in this release
+- Phase 2+: active coaching and deeper reasoning in progress
 
 ---
 
-## Guiding idea
+## Related
 
-> Kubernetes networking is the invisible layer students struggle with most.
-> cka-coach makes that layer visible, explainable, and learnable.
+Phase 1 repo:
+
+[https://github.com/fishtrap2/cka-coach](https://github.com/fishtrap2/cka-coach)
