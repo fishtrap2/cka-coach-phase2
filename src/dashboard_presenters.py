@@ -615,6 +615,7 @@ def build_networking_panel(state: Dict) -> Dict[str, Any]:
     classification = cni_evidence.get("classification", {})
     cni_version = cni_evidence.get("version", {})
     config_spec_version = cni_evidence.get("config_spec_version", {})
+    calico_330_signals = cni_evidence.get("calico_330_signals", {})
 
     cni_name = summary_versions.get("cni", "unknown")
     confidence = cni_evidence.get("confidence", "unknown").capitalize()
@@ -891,6 +892,31 @@ def build_networking_panel(state: Dict) -> Dict[str, Any]:
         "Install model": "Operator-managed" if operator_managed else "Pod / object detected",
     }
 
+    calico_330_rows = []
+    if cni_name == "calico" or calico_330_signals.get("goldmane", {}).get("present") or calico_330_signals.get("whisker", {}).get("present"):
+        calico_330_rows = [
+            {
+                "Feature": "Goldmane / Flow Insights",
+                "Status": calico_330_signals.get("goldmane", {}).get("status", "Not observed"),
+                "Evidence": calico_330_signals.get("goldmane", {}).get("evidence", "not observed"),
+            },
+            {
+                "Feature": "Whisker / Observability UI",
+                "Status": calico_330_signals.get("whisker", {}).get("status", "Not observed"),
+                "Evidence": calico_330_signals.get("whisker", {}).get("evidence", "not observed"),
+            },
+            {
+                "Feature": "Staged Policies",
+                "Status": calico_330_signals.get("staged_policies", {}).get("status", "Not observed"),
+                "Evidence": calico_330_signals.get("staged_policies", {}).get("evidence", "not observed"),
+            },
+            {
+                "Feature": "LoadBalancer IPAM",
+                "Status": calico_330_signals.get("loadbalancer_ipam", {}).get("status", "Not observed"),
+                "Evidence": calico_330_signals.get("loadbalancer_ipam", {}).get("evidence", "not observed"),
+            },
+        ]
+
     return {
         "overview": overview,
         "mode": _networking_mode_summary(state),
@@ -898,6 +924,7 @@ def build_networking_panel(state: Dict) -> Dict[str, Any]:
         "node_evidence": node_evidence[:4],
         "components": component_rows,
         "versions": version_rows,
+        "calico_330_signals": calico_330_rows,
         "policy_observability": {
             "Policy support": policy_supported.capitalize(),
             "Policy presence": policy_present,

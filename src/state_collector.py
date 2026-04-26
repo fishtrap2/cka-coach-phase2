@@ -734,6 +734,197 @@ def _summarize_network_policy_presence(policies_text: str) -> Dict[str, Any]:
     }
 
 
+def _table_data_lines(output: str) -> List[str]:
+    lines = [line for line in output.splitlines() if line.strip()]
+    return lines[1:] if len(lines) > 1 else []
+
+
+def _resource_list_summary(output: str) -> Dict[str, Any]:
+    lowered = output.lower()
+    if (
+        not output.strip()
+        or "kubectl not installed" in lowered
+        or "the server doesn't have a resource type" in lowered
+        or "no matches for kind" in lowered
+        or "error from server (notfound)" in lowered
+    ):
+        return {"count": 0, "namespaces": [], "supported": False}
+
+    data_lines = _table_data_lines(output)
+    if not data_lines:
+        return {"count": 0, "namespaces": [], "supported": True}
+
+    header = output.splitlines()[0].split()
+    namespaced = bool(header) and header[0].upper() == "NAMESPACE"
+    namespaces = []
+    if namespaced:
+        namespaces = sorted({line.split()[0] for line in data_lines if line.split()})
+
+    return {
+        "count": len(data_lines),
+        "namespaces": namespaces,
+        "supported": True,
+    }
+
+
+def _collect_calico_330_signals(runtime: Dict[str, str], cni_name: str) -> Dict[str, Any]:
+    pods_json = runtime.get("pods_json", "")
+    api_resources = runtime.get("api_resources", "")
+    services_json = runtime.get("services_json", "")
+    ippools_text = runtime.get("calico_ippools", "")
+
+    try:
+        pod_items = (json.loads(pods_json) or {}).get("items", []) if pods_json.strip() else []
+    except Exception:
+        pod_items = []
+
+    def _pod_signal(match: str) -> Dict[str, Any]:
+        matches = [
+            item for item in pod_items
+            if match in str((item.get("metadata", {}) or {}).get("name", "")).lower()
+        ]
+        ready_running = 0
+        namespaces = set()
+        for item in matches:
+            namespaces.add(str((item.get("metadata", {}) or {}).get("namespace", "")).strip())
+            status = item.get("status", {}) or {}
+            statuses = status.get("containerStatuses", []) or []
+            if status.get("phase") == "Running" and (not statuses or all(s.get("ready") for s in statuses)):
+                ready_running += 1
+
+        if matches:
+            namespace_text = ", ".join(sorted(ns for ns in namespaces if ns)) or "unknown namespace"
+            return {
+                "status": "Present",
+                "evidence": f"{ready_running}/{len(matches)} pod(s) ready in {namespace_text}",
+                "present": True,
+            }
+        return {
+            "status": "Not observed",
+            "evidence": f"no {match} pod observed",
+            "present": False,
+        }
+
+    lower_api_resources = api_resources.lower()
+    staged_api_lines = [
+        line.strip()
+        for line in api_resources.splitlines()
+        if "staged" in line.lower()
+    ]
+    staged_supported = bool(staged_api_lines)
+    staged_outputs = [
+        _resource_list_summary(runtime.get("staged_global_network_policies", "")),
+        _resource_list_summary(runtime.get("staged_network_policies", "")),
+        _resource_list_summary(runtime.get("staged_kubernetes_network_policies", "")),
+    ]
+    staged_count = sum(item["count"] for item in staged_outputs)
+    staged_namespaces = sorted(
+        {
+            namespace
+            for item in staged_outputs
+            for namespace in item.get("namespaces", [])
+        }
+    )
+    staged_supported = staged_supported or any(item["supported"] for item in staged_outputs)
+    if staged_count > 0:
+        staged_status = "Present"
+        ns_text = ", ".join(staged_namespaces[:4]) if staged_namespaces else "cluster-scoped"
+        staged_evidence = f"{staged_count} resource(s) in {ns_text}"
+    elif staged_supported:
+        staged_status = "Supported / none observed"
+        staged_evidence = "API resource present, 0 resources"
+    else:
+        staged_status = "Not observed"
+        staged_evidence = "no staged policy API resource observed"
+
+    lb_ipam_resource_lines = [
+        line.strip()
+        for line in api_resources.splitlines()
+        if "loadbalancer" in line.lower() and "projectcalico" in line.lower()
+    ]
+    lb_ipam_supported = bool(lb_ipam_resource_lines)
+    lb_ipam_output = _resource_list_summary(runtime.get("loadbalancer_ippools", ""))
+    lb_ipam_supported = lb_ipam_supported or lb_ipam_output["supported"]
+    lb_ipam_count = lb_ipam_output["count"]
+
+    try:
+        service_items = (json.loads(services_json) or {}).get("items", []) if services_json.strip() else []
+    except Exception:
+        service_items = []
+
+    loadbalancer_services = []
+    for item in service_items:
+        spec = item.get("spec", {}) or {}
+        if spec.get("type") != "LoadBalancer":
+            continue
+        metadata = item.get("metadata", {}) or {}
+        annotations = metadata.get("annotations", {}) or {}
+        loadbalancer_services.append(
+            {
+                "namespace": str(metadata.get("namespace", "")),
+                "name": str(metadata.get("name", "")),
+                "annotations": annotations,
+            }
+        )
+
+    calico_lb_annotations = [
+        service
+        for service in loadbalancer_services
+        if any("projectcalico" in key.lower() and "loadbalancer" in key.lower() for key in service["annotations"].keys())
+    ]
+
+    if lb_ipam_count > 0:
+        lb_ipam_status = "Present"
+        lb_ipam_evidence = f"{lb_ipam_count} LoadBalancer IPAM resource(s) observed"
+    elif calico_lb_annotations:
+        lb_ipam_status = "Calico LB service observed"
+        lb_ipam_evidence = f"{len(calico_lb_annotations)} annotated LoadBalancer service(s)"
+    elif lb_ipam_supported:
+        if loadbalancer_services:
+            lb_ipam_status = "Supported; LB service observed"
+            lb_ipam_evidence = f"{len(loadbalancer_services)} LoadBalancer service(s), no Calico LB IPAM allocation observed"
+        else:
+            lb_ipam_status = "Supported / none observed"
+            lb_ipam_evidence = "API resource present, no allocation observed"
+    elif loadbalancer_services:
+        lb_ipam_status = "LoadBalancer service observed"
+        lb_ipam_evidence = f"{len(loadbalancer_services)} LoadBalancer service(s), no Calico LB IPAM evidence"
+    else:
+        lb_ipam_status = "Not observed"
+        lb_ipam_evidence = "no LB IPAM allocation or API resource observed"
+
+    signals = {
+        "goldmane": _pod_signal("goldmane"),
+        "whisker": _pod_signal("whisker"),
+        "staged_policies": {
+            "status": staged_status,
+            "evidence": staged_evidence,
+            "supported": staged_supported,
+            "count": staged_count,
+            "namespaces": staged_namespaces,
+        },
+        "loadbalancer_ipam": {
+            "status": lb_ipam_status,
+            "evidence": lb_ipam_evidence,
+            "supported": lb_ipam_supported,
+            "count": lb_ipam_count,
+            "loadbalancer_services": len(loadbalancer_services),
+        },
+        "other": [],
+    }
+
+    if cni_name != "calico" and not signals["goldmane"]["present"] and not signals["whisker"]["present"] and not staged_supported and not lb_ipam_supported:
+        signals["summary"] = "no Calico 3.30+ signals observed"
+    else:
+        signals["summary"] = "compact Calico 3.30+ capability signals collected"
+
+    if "calico ippool present" in ippools_text.lower():
+        # keep pod IPPool evidence separate from LoadBalancer IPAM claims
+        signals["other"].append("Pod IPPool evidence observed (not used as LoadBalancer IPAM evidence)")
+
+    return signals
+
+
 def _summarize_cni_cluster_footprint(
     cni_name: str,
     cluster_level: Dict[str, Any],
@@ -1722,6 +1913,7 @@ def collect_state(
 
         # cluster policy objects
         "network_policies": _safe_kubectl("kubectl get networkpolicy -A"),
+        "api_resources": _safe_kubectl("kubectl api-resources"),
 
         # cluster daemonsets / deployments for networking footprint summaries
         "daemonsets": _safe_kubectl("kubectl get daemonsets -A"),
@@ -1733,6 +1925,10 @@ def collect_state(
         "calico_installations_json": _safe_kubectl("kubectl get installation.operator.tigera.io -A -o json"),
         "calico_ippools": _safe_kubectl("kubectl get ippools.crd.projectcalico.org -A"),
         "calico_ippools_json": _safe_kubectl("kubectl get ippools.crd.projectcalico.org -A -o json"),
+        "staged_global_network_policies": _safe_kubectl("kubectl get stagedglobalnetworkpolicies.crd.projectcalico.org -A"),
+        "staged_network_policies": _safe_kubectl("kubectl get stagednetworkpolicies.crd.projectcalico.org -A"),
+        "staged_kubernetes_network_policies": _safe_kubectl("kubectl get stagedkubernetesnetworkpolicies.crd.projectcalico.org -A"),
+        "loadbalancer_ippools": _safe_kubectl("kubectl get loadbalancerippools.crd.projectcalico.org -A"),
 
         # detailed kube-system pod data used for direct image-tag evidence
         "kube_system_pods_json": _safe_kubectl("kubectl get pods -n kube-system -o json"),
@@ -1789,6 +1985,10 @@ def collect_state(
         combined_cni_detection.get("cni", "unknown"),
     )
     provenance = _load_cni_provenance(runtime.get("cni_provenance_configmap", ""))
+    calico_330_signals = _collect_calico_330_signals(
+        runtime,
+        combined_cni_detection.get("cni", "unknown"),
+    )
 
     versions = {
         "api": _safe_kubectl_version_short(),
@@ -1833,6 +2033,7 @@ def collect_state(
             "migration_note": migration_note,
             "event_history": event_history,
             "provenance": provenance,
+            "calico_330_signals": calico_330_signals,
             "node_level": node_cni_detection,
             "cluster_level": cluster_cni_detection,
         },

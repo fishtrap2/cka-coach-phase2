@@ -143,6 +143,139 @@ class TestCniDetection(unittest.TestCase):
         self.assertEqual(panel["mode"]["Encapsulation"], "unknown")
         self.assertEqual(panel["mode"]["BGP"], "unknown")
 
+    def test_collect_calico_330_signals_detects_goldmane_and_whisker(self):
+        runtime = {
+            "pods_json": json.dumps(
+                {
+                    "items": [
+                        {
+                            "metadata": {"name": "goldmane-123", "namespace": "calico-system"},
+                            "status": {"phase": "Running", "containerStatuses": [{"ready": True}]},
+                        },
+                        {
+                            "metadata": {"name": "whisker-123", "namespace": "calico-system"},
+                            "status": {"phase": "Running", "containerStatuses": [{"ready": True}]},
+                        },
+                    ]
+                }
+            ),
+            "api_resources": "",
+            "services_json": json.dumps({"items": []}),
+            "calico_ippools": "",
+            "staged_global_network_policies": "",
+            "staged_network_policies": "",
+            "staged_kubernetes_network_policies": "",
+            "loadbalancer_ippools": "",
+        }
+
+        signals = state_collector._collect_calico_330_signals(runtime, "calico")
+
+        self.assertEqual(signals["goldmane"]["status"], "Present")
+        self.assertEqual(signals["whisker"]["status"], "Present")
+
+    def test_collect_calico_330_signals_reports_staged_supported_none_observed(self):
+        runtime = {
+            "pods_json": json.dumps({"items": []}),
+            "api_resources": "NAME SHORTNAMES APIVERSION NAMESPACED KIND\nstagednetworkpolicies snp crd.projectcalico.org/v1 true StagedNetworkPolicy\n",
+            "services_json": json.dumps({"items": []}),
+            "calico_ippools": "",
+            "staged_global_network_policies": "No resources found",
+            "staged_network_policies": "No resources found",
+            "staged_kubernetes_network_policies": "No resources found",
+            "loadbalancer_ippools": "",
+        }
+
+        signals = state_collector._collect_calico_330_signals(runtime, "calico")
+
+        self.assertEqual(signals["staged_policies"]["status"], "Supported / none observed")
+        self.assertEqual(signals["staged_policies"]["count"], 0)
+
+    def test_collect_calico_330_signals_reports_staged_policy_resources_present(self):
+        runtime = {
+            "pods_json": json.dumps({"items": []}),
+            "api_resources": "NAME SHORTNAMES APIVERSION NAMESPACED KIND\nstagednetworkpolicies snp crd.projectcalico.org/v1 true StagedNetworkPolicy\n",
+            "services_json": json.dumps({"items": []}),
+            "calico_ippools": "",
+            "staged_global_network_policies": "",
+            "staged_network_policies": (
+                "NAMESPACE NAME TIER ORDER SELECTOR\n"
+                "default test-stage default 100 all()\n"
+            ),
+            "staged_kubernetes_network_policies": "",
+            "loadbalancer_ippools": "",
+        }
+
+        signals = state_collector._collect_calico_330_signals(runtime, "calico")
+
+        self.assertEqual(signals["staged_policies"]["status"], "Present")
+        self.assertEqual(signals["staged_policies"]["count"], 1)
+        self.assertEqual(signals["staged_policies"]["namespaces"], ["default"])
+
+    def test_collect_calico_330_signals_reports_lb_ipam_not_observed(self):
+        runtime = {
+            "pods_json": json.dumps({"items": []}),
+            "api_resources": "",
+            "services_json": json.dumps({"items": []}),
+            "calico_ippools": "",
+            "staged_global_network_policies": "",
+            "staged_network_policies": "",
+            "staged_kubernetes_network_policies": "",
+            "loadbalancer_ippools": "",
+        }
+
+        signals = state_collector._collect_calico_330_signals(runtime, "calico")
+
+        self.assertEqual(signals["loadbalancer_ipam"]["status"], "Not observed")
+
+    def test_collect_calico_330_signals_does_not_confuse_pod_ippool_with_lb_ipam(self):
+        runtime = {
+            "pods_json": json.dumps({"items": []}),
+            "api_resources": "",
+            "services_json": json.dumps({"items": []}),
+            "calico_ippools": "NAME CREATED AT\ndefault-ipv4-ippool 2026-04-22T00:00:00Z\n",
+            "staged_global_network_policies": "",
+            "staged_network_policies": "",
+            "staged_kubernetes_network_policies": "",
+            "loadbalancer_ippools": "",
+        }
+
+        signals = state_collector._collect_calico_330_signals(runtime, "calico")
+
+        self.assertEqual(signals["loadbalancer_ipam"]["status"], "Not observed")
+
+    def test_build_networking_panel_includes_calico_330_signal_rows(self):
+        state = {
+            "runtime": {"pods_json": "", "nodes": "", "calico_installations_json": "", "calico_ippools_json": ""},
+            "summary": {"versions": {"cni": "calico"}},
+            "health": {"cni_ok": "healthy"},
+            "evidence": {
+                "cni": {
+                    "confidence": "high",
+                    "capabilities": {"network_policy": True, "summary": "policy-capable dataplane likely"},
+                    "policy_presence": {"status": "present", "count": 1, "namespaces": ["default"]},
+                    "cluster_level": {"cni": "calico"},
+                    "node_level": {"cni": "unknown"},
+                    "cluster_footprint": {"daemonsets": []},
+                    "cluster_platform_signals": {"signals": []},
+                    "calico_runtime": {"status": "unknown"},
+                    "classification": {"state": "healthy_calico", "notes": []},
+                    "version": {"value": "unknown", "source": "unknown"},
+                    "config_spec_version": {"value": "unknown"},
+                    "calico_330_signals": {
+                        "goldmane": {"status": "Present", "evidence": "1/1 pod(s) ready in calico-system", "present": True},
+                        "whisker": {"status": "Present", "evidence": "1/1 pod(s) ready in calico-system", "present": True},
+                        "staged_policies": {"status": "Supported / none observed", "evidence": "API resource present, 0 resources"},
+                        "loadbalancer_ipam": {"status": "Not observed", "evidence": "no LB IPAM allocation or API resource observed"},
+                    },
+                }
+            },
+        }
+
+        panel = dashboard_presenters.build_networking_panel(state)
+
+        self.assertEqual(len(panel["calico_330_signals"]), 4)
+        self.assertEqual(panel["calico_330_signals"][0]["Feature"], "Goldmane / Flow Insights")
+
     def test_build_network_visual_model_reflects_two_node_calico_topology(self):
         state = {
             "runtime": {

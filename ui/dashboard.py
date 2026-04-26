@@ -1142,6 +1142,12 @@ with version_col:
         else:
             st.caption("No current networking component versions were directly observed.")
 
+calico_330_rows = networking_panel.get("calico_330_signals", [])
+if calico_330_rows:
+    with st.container(border=True):
+        st.markdown("### Calico 3.30+ Signals")
+        st.table(calico_330_rows)
+
 # --------------------------
 # Network Visual Panel
 # --------------------------
