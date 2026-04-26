@@ -166,13 +166,13 @@ Traffic is currently allowed, but would be denied if policy is enforced.
 
 Once VXLAN traffic was restored and the dataplane was functioning properly, cka-coach reflected the recovered networking state and associated Calico 3.30+ signals:
 
-![cka-coach outcome](../images/learning-moments/calico-residual-cka-coach-outcome.png)
+![cka-coach outcome](../images/learning-moments/calico-residual-whisker-outcome.png)
 
 ### Outcome in Whisker
 
 Whisker then showed the recovered flow, along with both enforced and staged policy context:
 
-![Whisker outcome](../images/learning-moments/calico-residual-whisker-outcome.png)
+![Whisker outcome](../images/learning-moments/calico-residual-cka-coach-outcome.png)
 
 ---
 
